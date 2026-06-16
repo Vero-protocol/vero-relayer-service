@@ -7,6 +7,7 @@ client.collectDefaultMetrics();
 const vero_events_processed_total = new client.Counter({
   name: 'vero_events_processed_total',
   help: 'Total number of processed Vero events',
+  labelNames: ['task_type'],
 });
 
 // Histogram for queue latency (seconds)
