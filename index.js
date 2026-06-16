@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const {
   buildGitHubPullRequestEventPayload,
   buildMetadataFromRequest,
@@ -9,7 +10,9 @@ const {
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
   const app = express();
-
+  app.set('trust proxy', true);
+  const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, message: 'Too many requests, please try again later.' });
+  app.use(limiter);
   app.use(express.json());
 const { registerTaskOnChain } = require('./stellar');
 const { verifySignature } = require('./src/middleware/auth');
@@ -41,6 +44,9 @@ try {
 const batcher = new EventBatcher(registerBatchOnChain);
 
 const app = express();
+app.set('trust proxy', true);
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, message: 'Too many requests, please try again later.' });
+app.use(limiter);
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf;
