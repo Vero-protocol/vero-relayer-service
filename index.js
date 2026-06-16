@@ -21,9 +21,25 @@ app.post('/github-webhook', verifySignature, async (req, res) => {
     return res.status(200).json({ skipped: true, reason: 'no wave-contribution label' });
   }
 
+  const start = Date.now();
   console.log(`[webhook] PR #${pr.number} merged with wave-contribution label`);
-  await registerTaskOnChain(pr.number);
+  try {
+    await registerTaskOnChain(pr.number);
+    vero_events_processed_total.inc();
+  } catch (error) {
+    // We can increment an error counter or track failure if needed, but currently let's just rethrow or return 500.
+    // The problem statement requires tracking processed events and latency.
+    throw error;
+  } finally {
+    const durationSec = (Date.now() - start) / 1000;
+    queue_latency_seconds.observe(durationSec);
+  }
   res.status(200).json({ ok: true, pr: pr.number });
 });
 
-app.listen(3000, () => console.log('Server listening on port 3000'));
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+}
+
+module.exports = app;

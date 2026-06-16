@@ -6,14 +6,18 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "simulate": "node scripts/mock-webhook.js"
+    "simulate": "node scripts/mock-webhook.js",
+    "test": "jest"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "12.3.0",
     "dotenv": "16.4.5",
-    "express": "4.19.2"
+    "express": "4.19.2",
+    "prom-client": "^15.0.0"
   },
   "devDependencies": {
-    "nodemon": "3.1.4"
+    "nodemon": "3.1.4",
+    "jest": "29.7.0",
+    "supertest": "6.3.4"
   }
 }
