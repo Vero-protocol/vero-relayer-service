@@ -9,6 +9,8 @@ const { verifySignature } = require('./src/middleware/auth');
 const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
+const path = require('path');
+const { generateCallGraph } = require('./src/services/call-graph');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
@@ -24,6 +26,27 @@ function createApp(options = {}) {
 
   app.get('/health', (req, res) => {
     res.status(200).send('OK');
+  });
+
+  app.get('/api/contract-calls', (req, res) => {
+    try {
+      const graph = generateCallGraph(path.join(__dirname, 'contracts'));
+      res.json(graph);
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed to generate contract call graph');
+      res.status(500).json({ error: 'Failed to generate contract call graph' });
+    }
+  });
+
+  // Serve static files from Vite's build directory
+  app.use(express.static(path.join(__dirname, 'dist')));
+
+  // Fallback to index.html for SPA frontend routing
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health' || req.path === '/metrics') {
+      return next();
+    }
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 
   app.post('/github-webhook', verifySignature, async (req, res) => {

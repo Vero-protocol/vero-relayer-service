@@ -7,7 +7,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "types": ["node"]
   },
-  "include": ["src/services/fee-engine.ts"]
+  "include": [
+    "src/services/fee-engine.ts",
+    "src/components/visualizer/**/*"
+  ]
 }
