@@ -2,6 +2,7 @@ const fs = require('fs/promises');
 const os = require('os');
 const { getEventQueue } = require('../queue/event-queue');
 const { logger } = require('../logger');
+const { injectTraceHeaders } = require('../tracing');
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -65,9 +66,9 @@ async function checkRpcConnection(env = process.env) {
   try {
     const response = await fetch(rpcUrl, {
       method: 'GET',
-      headers: {
+      headers: injectTraceHeaders({
         accept: 'application/json'
-      }
+      })
     });
 
     return {
@@ -156,7 +157,9 @@ async function sendDiagnosticAlert(report, options = {}) {
       try {
         await fetch(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: injectTraceHeaders({
+            'content-type': 'application/json'
+          }),
           body: JSON.stringify({ text: message })
         });
         notifications.push({ channel: 'slack', status: 'sent' });

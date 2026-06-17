@@ -99,7 +99,7 @@ async function startEventWorker() {
     }
 
     closing = true;
-    console.log(`[worker] status=shutdown signal=${signal}`);
+    logger.info({ signal }, 'worker shutting down');
     await worker.close();
     process.exit(0);
   }

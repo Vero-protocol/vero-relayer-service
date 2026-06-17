@@ -5,20 +5,47 @@ const {
   enqueueEvent,
   validateRedisConfig
 } = require('./src/queue');
-const { logger } = require('./src/logger');
-const { verifySignature } = require('./src/middleware/auth');
-const { getDiagnosticReport, startHeartbeatService } = require('./src/services/diagnostics');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
   const app = express();
-  const verifyWebhook = process.env.WEBHOOK_SECRET ? verifySignature : (req, res, next) => next();
 
-  app.use(express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
+  app.use(express.json());
+const { registerTaskOnChain } = require('./stellar');
+const { verifySignature } = require('./src/middleware/auth');
+
+// Inline require of the compiled/ts-node batcher. Using require with ts-node
+// registration, or the plain JS equivalent below if TS is not bootstrapped.
+let EventBatcher;
+try {
+  require('ts-node/register');
+  ({ EventBatcher } = require('./src/queue/batcher'));
+} catch {
+  // Fallback: inline minimal batcher so the server still boots without ts-node
+  EventBatcher = class {
+    constructor(flush) { this.flush = flush; this.queue = []; this.timer = null; }
+    enqueue(id) {
+      this.queue.push(id);
+      if (!this.timer) this.timer = setTimeout(() => this._drain(), 5000);
+      if (this.queue.length >= 50) this._drain();
     }
-  }));
+    _drain() {
+      clearTimeout(this.timer); this.timer = null;
+      if (!this.queue.length) return;
+      const batch = this.queue.splice(0);
+      this.flush(batch).catch(e => console.error('[batcher] flush error:', e));
+    }
+  };
+}
+
+const batcher = new EventBatcher(registerBatchOnChain);
+
+const app = express();
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ ok: true, service: 'vero-relayer-service' });
@@ -72,6 +99,7 @@ function createApp(options = {}) {
 
 function startServer() {
   validateRedisConfig();
+  initializeTracing();
 
   const port = process.env.PORT || 3000;
   const app = createApp();

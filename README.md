@@ -143,6 +143,9 @@ vero-relayer-service/
 | `REDIS_TLS` | No | Set to `true` to enable TLS |
 | `EVENT_QUEUE_NAME` | No | Defaults to `vero:event-processing` |
 | `EVENT_QUEUE_CONCURRENCY` | No | Worker concurrency, defaults to `5` |
+| `OTEL_SERVICE_NAME` | No | Service name reported to the tracing backend |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | No | OTLP endpoint for exporting traces, such as Jaeger or Grafana |
+| `OTEL_SDK_DISABLED` | No | Set to `true` to disable tracing at startup |
 
 ---
 
