@@ -39,6 +39,53 @@ function createApp(options = {}) {
   });
 
   let contractKilled = false;
+  let admins = [
+    'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1',
+    'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2',
+    'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3'
+  ];
+  let threshold = 2;
+  let nonce = 0;
+  let tasks = {};
+  let proposals = [];
+
+  function generateProposalHash(action, params) {
+    const dataString = `${nonce}:${action}:${JSON.stringify(params)}`;
+    const crypto = require('crypto');
+    return '0x' + crypto.createHash('sha256').update(dataString).digest('hex');
+  }
+
+  function executeAdminAction(action, params) {
+    if (action === 'RegisterTask') {
+      const pr = Number(params.pr);
+      if (isNaN(pr) || pr <= 0) throw new Error('Invalid PR number');
+      tasks[pr] = true;
+    } else if (action === 'PurgeTask') {
+      const pr = Number(params.pr);
+      delete tasks[pr];
+    } else if (action === 'UpdateThreshold') {
+      const m = Number(params.threshold);
+      if (isNaN(m) || m <= 0 || m > admins.length) {
+        const err = new Error('Invalid threshold');
+        err.code = 4;
+        throw err;
+      }
+      threshold = m;
+    } else if (action === 'UpdateAdmins') {
+      const newAdmins = params.admins;
+      if (!Array.isArray(newAdmins) || newAdmins.length === 0) {
+        const err = new Error('Empty admin set');
+        err.code = 3;
+        throw err;
+      }
+      admins = newAdmins;
+      if (threshold > admins.length) {
+        threshold = admins.length;
+      }
+    } else {
+      throw new Error('Unknown action type');
+    }
+  }
 
   app.get('/api/admin/status', (req, res) => {
     res.json({ killed: contractKilled });
@@ -64,6 +111,261 @@ function createApp(options = {}) {
     contractKilled = false;
     logger.info('Contract kill switch reset, service active');
     res.json({ ok: true, message: 'Contract successfully reactivated' });
+  });
+
+  app.get('/api/admin/multisig/state', (req, res) => {
+    res.json({
+      admins,
+      threshold,
+      nonce,
+      tasks: Object.keys(tasks).map(Number),
+      killed: contractKilled
+    });
+  });
+
+  app.get('/api/admin/multisig/proposals', (req, res) => {
+    res.json(proposals);
+  });
+
+  app.post('/api/admin/multisig/propose', (req, res) => {
+    if (contractKilled) {
+      return res.status(400).json({ error: 'Contract is terminated (killed)', code: 8 });
+    }
+
+    const { proposer, action, params } = req.body;
+    if (!proposer || !action || !params) {
+      return res.status(400).json({ error: 'Proposer, action and params are required' });
+    }
+
+    if (!admins.includes(proposer)) {
+      return res.status(411).json({ error: 'Unauthorized signer address', code: 1 });
+    }
+
+    const hash = generateProposalHash(action, params);
+
+    if (proposals.some(p => p.hash === hash)) {
+      return res.status(400).json({ error: 'Proposal already exists', code: 6 });
+    }
+
+    const newProposal = {
+      hash,
+      action,
+      params,
+      approvals: [proposer],
+      executed: false
+    };
+
+    proposals.push(newProposal);
+    res.json({ ok: true, proposal: newProposal });
+  });
+
+  app.post('/api/admin/multisig/approve', (req, res) => {
+    if (contractKilled) {
+      return res.status(400).json({ error: 'Contract is terminated (killed)', code: 8 });
+    }
+
+    const { approver, hash } = req.body;
+    if (!approver || !hash) {
+      return res.status(400).json({ error: 'Approver and proposal hash are required' });
+    }
+
+    if (!admins.includes(approver)) {
+      return res.status(411).json({ error: 'Unauthorized signer address', code: 1 });
+    }
+
+    const proposal = proposals.find(p => p.hash === hash);
+    if (!proposal) {
+      return res.status(404).json({ error: 'Proposal not found', code: 5 });
+    }
+
+    if (proposal.executed) {
+      return res.status(400).json({ error: 'Proposal already executed', code: 7 });
+    }
+
+    if (!proposal.approvals.includes(approver)) {
+      proposal.approvals.push(approver);
+    }
+
+    let executed = false;
+    if (proposal.approvals.length >= threshold) {
+      executed = true;
+      proposal.executed = true;
+
+      try {
+        executeAdminAction(proposal.action, proposal.params);
+        nonce += 1;
+      } catch (err) {
+        proposal.executed = false;
+        return res.status(400).json({ error: err.message, code: err.code || 4 });
+      }
+    }
+
+    res.json({ ok: true, proposal, executed });
+  });
+
+  app.post('/api/admin/multisig/simulate', (req, res) => {
+    if (contractKilled) {
+      return res.json({
+        success: false,
+        error: 'Contract is terminated (killed)',
+        code: 8,
+        willExecute: false,
+        stateChanges: []
+      });
+    }
+
+    const { type, signer, action, params, hash } = req.body;
+
+    if (!signer) {
+      return res.status(400).json({ error: 'Signer/Proposer address is required' });
+    }
+
+    if (!admins.includes(signer)) {
+      return res.json({
+        success: false,
+        error: 'Unauthorized signer address',
+        code: 1,
+        willExecute: false,
+        stateChanges: []
+      });
+    }
+
+    let willExecute = false;
+    let simulatedApprovals = [];
+    let targetAction = action;
+    let targetParams = params;
+
+    if (type === 'propose') {
+      const mockHash = generateProposalHash(action, params);
+      if (proposals.some(p => p.hash === mockHash)) {
+        return res.json({
+          success: false,
+          error: 'Proposal already exists',
+          code: 6,
+          willExecute: false,
+          stateChanges: []
+        });
+      }
+      simulatedApprovals = [signer];
+      willExecute = simulatedApprovals.length >= threshold;
+    } else if (type === 'approve') {
+      const proposal = proposals.find(p => p.hash === hash);
+      if (!proposal) {
+        return res.json({
+          success: false,
+          error: 'Proposal not found',
+          code: 5,
+          willExecute: false,
+          stateChanges: []
+        });
+      }
+      if (proposal.executed) {
+        return res.json({
+          success: false,
+          error: 'Proposal already executed',
+          code: 7,
+          willExecute: false,
+          stateChanges: []
+        });
+      }
+      simulatedApprovals = [...proposal.approvals];
+      if (!simulatedApprovals.includes(signer)) {
+        simulatedApprovals.push(signer);
+      }
+      willExecute = simulatedApprovals.length >= threshold;
+      targetAction = proposal.action;
+      targetParams = proposal.params;
+    } else {
+      return res.status(400).json({ error: 'Invalid simulation type' });
+    }
+
+    const stateChanges = [];
+
+    const currentProposal = type === 'approve' ? proposals.find(p => p.hash === hash) : null;
+    const approvalsBefore = currentProposal ? currentProposal.approvals.length : 0;
+    const approvalsAfter = simulatedApprovals.length;
+    if (approvalsBefore !== approvalsAfter) {
+      stateChanges.push({
+        key: 'Approvals Count',
+        before: `${approvalsBefore} / ${threshold}`,
+        after: `${approvalsAfter} / ${threshold}`
+      });
+    }
+
+    if (willExecute) {
+      try {
+        if (targetAction === 'RegisterTask') {
+          const pr = Number(targetParams.pr);
+          if (isNaN(pr) || pr <= 0) throw new Error('Invalid PR number');
+          stateChanges.push({
+            key: `Task #${pr}`,
+            before: 'Not Registered',
+            after: 'Registered'
+          });
+        } else if (targetAction === 'PurgeTask') {
+          const pr = Number(targetParams.pr);
+          stateChanges.push({
+            key: `Task #${pr}`,
+            before: tasks[pr] ? 'Registered' : 'Not Registered',
+            after: 'Not Registered (Purged)'
+          });
+        } else if (targetAction === 'UpdateThreshold') {
+          const m = Number(targetParams.threshold);
+          if (isNaN(m) || m <= 0 || m > admins.length) {
+            const err = new Error('Invalid threshold');
+            err.code = 4;
+            throw err;
+          }
+          stateChanges.push({
+            key: 'Multisig Threshold',
+            before: threshold.toString(),
+            after: m.toString()
+          });
+        } else if (targetAction === 'UpdateAdmins') {
+          const newAdmins = targetParams.admins;
+          if (!Array.isArray(newAdmins) || newAdmins.length === 0) {
+            const err = new Error('Empty admin set');
+            err.code = 3;
+            throw err;
+          }
+          stateChanges.push({
+            key: 'Admin Set',
+            before: admins.join(', '),
+            after: newAdmins.join(', ')
+          });
+          if (threshold > newAdmins.length) {
+            stateChanges.push({
+              key: 'Multisig Threshold (Auto-adjusted)',
+              before: threshold.toString(),
+              after: newAdmins.length.toString()
+            });
+          }
+        } else {
+          throw new Error('Unknown action type');
+        }
+
+        stateChanges.push({
+          key: 'Contract Nonce',
+          before: nonce.toString(),
+          after: (nonce + 1).toString()
+        });
+      } catch (err) {
+        return res.json({
+          success: false,
+          error: err.message,
+          code: err.code || 4,
+          willExecute: false,
+          stateChanges: []
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      willExecute,
+      stateChanges,
+      nonceAfter: willExecute ? nonce + 1 : nonce
+    });
   });
 
   // Serve static files from Vite's build directory
