@@ -1,8 +1,12 @@
+import { logger } from '../logger';
+
 const MAX_RETRIES = 3;
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 class TransactionWatcher {
-  constructor(db) {
+  private db: Map<string, any>;
+
+  constructor(db?: Map<string, any>) {
     this.db = db || new Map();
   }
 
@@ -16,13 +20,13 @@ class TransactionWatcher {
         
         if (timeSinceSubmission > TIMEOUT_MS) {
           if (tx.retries < MAX_RETRIES) {
-            console.log(`[Watcher] Tx ${txId} stalled. Re-queuing (Retry ${tx.retries + 1}/${MAX_RETRIES})`);
+            logger.info({ txId, retry: tx.retries + 1 }, '[Watcher] Transaction stalled. Re-queuing.');
             tx.status = 'requeued';
             tx.retries += 1;
             tx.lastRetryAt = now;
             requeuedCount++;
           } else {
-            console.log(`[Watcher] Tx ${txId} stalled. Max retries reached. Marking as failed.`);
+            logger.info({ txId }, '[Watcher] Transaction stalled. Max retries reached. Marking as failed.');
             tx.status = 'failed';
           }
           this.db.set(txId, tx);

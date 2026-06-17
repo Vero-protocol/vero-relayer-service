@@ -1,4 +1,5 @@
 import { rpc } from '@stellar/stellar-sdk';
+const rpcFactory = require('./rpc-factory');
 
 export const DEFAULT_BASE_FEE = '100';
 export const DEFAULT_MIN_FEE = '100';
@@ -52,7 +53,7 @@ type Multiplier = {
 };
 
 export type FeeEngineConfig = {
-  rpcUrl: string | null;
+  rpcUrl?: string | null;
   baseFee: bigint;
   minFee: bigint;
   maxFee: bigint;
@@ -167,7 +168,6 @@ export function getFeeEngineConfig(env: Record<string, string | undefined> = pro
   }
 
   return {
-    rpcUrl: parseRpcUrl(env.STELLAR_RPC_URL),
     baseFee,
     minFee,
     maxFee,
@@ -239,13 +239,13 @@ export function extractPercentileFee(stats: FeeStatsResponse, percentile = DEFAU
 
 export function createFeeStatsClient(rpcUrl: string | null): FeeStatsClient | null {
   if (!rpcUrl) {
-    return null;
+    return rpcFactory.getSorobanServer();
   }
 
   const parsedUrl = new URL(rpcUrl);
   return new rpc.Server(rpcUrl, {
     allowHttp: parsedUrl.protocol === 'http:'
-  });
+  }) as unknown as FeeStatsClient;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -290,8 +290,9 @@ function log(logger: Logger, message: string): void {
 }
 
 function getCacheKey(config: FeeEngineConfig): string {
+  const rpcUrl = config.rpcUrl || (rpcFactory.getSorobanServer() ? rpcFactory.getSorobanServer().serverUrl : 'no-rpc');
   return [
-    config.rpcUrl || 'no-rpc',
+    rpcUrl,
     config.baseFee.toString(),
     config.minFee.toString(),
     config.maxFee.toString(),

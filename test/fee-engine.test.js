@@ -162,7 +162,6 @@ test('fee multiplier uses integer stroop math', async () => {
 test('invalid max cap fails configuration clearly', () => {
   assert.throws(() => getFeeEngineConfig(env({ STELLAR_MAX_FEE: '0' })), /greater than 0/);
   assert.throws(() => getFeeEngineConfig(env({ STELLAR_MIN_FEE: '2000', STELLAR_MAX_FEE: '1000' })), /less than or equal/);
-  assert.throws(() => getFeeEngineConfig(env({ STELLAR_RPC_URL: 'file:///tmp/not-rpc' })), /http or https/);
 });
 
 test('short cache window reuses recent fee estimates only when configured', async () => {

@@ -1,3 +1,4 @@
+const { logger } = require('../logger');
 const { retry } = require('../utils/retry');
 
 async function broadcastTransaction(server, transaction) {
@@ -13,7 +14,7 @@ async function broadcastTransaction(server, transaction) {
       maxRetries: 3,
       baseDelay: 1000,
       onRetry: ({ attempt, delay, error }) => {
-        console.warn(`[broadcaster] Retry ${attempt + 1}/3 after ${delay}ms: ${error.message}`);
+        logger.warn({ attempt: attempt + 1, delay, error: error.message }, '[broadcaster] Retry submitting transaction');
       },
     }
   );
@@ -26,7 +27,7 @@ async function fetchAccount(server, accountId) {
       maxRetries: 3,
       baseDelay: 500,
       onRetry: ({ attempt, delay, error }) => {
-        console.warn(`[broadcaster] Account fetch retry ${attempt + 1}/3 after ${delay}ms: ${error.message}`);
+        logger.warn({ attempt: attempt + 1, delay, error: error.message }, '[broadcaster] Account fetch retry');
       },
     }
   );

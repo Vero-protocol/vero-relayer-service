@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { rpc } = require('@stellar/stellar-sdk');
+const rpcFactory = require('./rpc-factory');
 
 const DEFAULT_BASE_FEE = '100';
 const DEFAULT_MIN_FEE = '100';
@@ -100,7 +101,6 @@ function getFeeEngineConfig(env = process.env) {
   }
 
   return {
-    rpcUrl: parseRpcUrl(env.STELLAR_RPC_URL),
     baseFee,
     minFee,
     maxFee,
@@ -172,7 +172,7 @@ function extractPercentileFee(stats, percentile = DEFAULT_PERCENTILE) {
 
 function createFeeStatsClient(rpcUrl) {
   if (!rpcUrl) {
-    return null;
+    return rpcFactory.getSorobanServer();
   }
 
   const parsedUrl = new URL(rpcUrl);
@@ -223,8 +223,9 @@ function log(logger, message) {
 }
 
 function getCacheKey(config) {
+  const rpcUrl = config.rpcUrl || (rpcFactory.getSorobanServer() ? rpcFactory.getSorobanServer().serverUrl : 'no-rpc');
   return [
-    config.rpcUrl || 'no-rpc',
+    rpcUrl,
     config.baseFee.toString(),
     config.minFee.toString(),
     config.maxFee.toString(),
