@@ -1,6 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { verifySignature } = require('./src/middleware/auth');
+const { healthCheck } = require('./src/db/client');
 const {
   buildGitHubPullRequestEventPayload,
   buildMetadataFromRequest,
@@ -84,8 +85,9 @@ function createApp(options = {}) {
   return app;
 }
 
-function startServer() {
+async function startServer() {
   validateRedisConfig();
+  await healthCheck();
   const port = process.env.PORT || 3000;
   const app = createApp();
   return app.listen(port, () => console.log(`Server listening on port ${port}`));
@@ -95,3 +97,10 @@ module.exports = {
   createApp,
   startServer
 };
+
+if (require.main === module) {
+  startServer().catch(err => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}
