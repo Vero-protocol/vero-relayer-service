@@ -4,9 +4,10 @@ const client = require('prom-client');
 client.collectDefaultMetrics();
 
 // Counter for total processed events
-const vero_events_processed_total = new client.Counter({
+// Counter for total processed events, now labeled by task_type for better granularity
   name: 'vero_events_processed_total',
   help: 'Total number of processed Vero events',
+  labelNames: ['task_type'],
 });
 
 // Histogram for queue latency (seconds)

@@ -102,7 +102,7 @@ module.exports = {
   console.log(`[webhook] PR #${pr.number} merged with wave-contribution label`);
   try {
     await registerTaskOnChain(pr.number);
-    vero_events_processed_total.inc();
+    vero_events_processed_total.inc({ task_type: 'admin' });
   } catch (error) {
     // We can increment an error counter or track failure if needed, but currently let's just rethrow or return 500.
     // The problem statement requires tracking processed events and latency.
