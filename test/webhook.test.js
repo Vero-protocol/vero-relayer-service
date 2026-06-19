@@ -139,3 +139,39 @@ test('github webhook rejects requests with missing signature', async t => {
 
   assert.equal(response.status, 401);
 });
+
+test('github webhook returns 503 when enqueue infrastructure is unavailable', async t => {
+  process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
+  t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
+
+  const app = createApp({
+    enqueueEventJob: async () => {
+      const error = new Error('Redis connection timed out');
+      error.code = 'ETIMEDOUT';
+      throw error;
+    }
+  });
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  const body = JSON.stringify({
+    action: 'closed',
+    pull_request: {
+      number: 42,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    }
+  });
+
+  const response = await fetch(url(server, '/github-webhook'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hub-signature-256': sign(body)
+    },
+    body
+  });
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, error: 'service unavailable' });
+});

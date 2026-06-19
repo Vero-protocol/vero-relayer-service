@@ -47,7 +47,20 @@ async function processEventJob(job, dependencies = {}) {
     throw new UnrecoverableError('Invalid event payload: missing pull request number');
   }
 
-  await broadcaster(pullRequestNumber);
+  try {
+    await broadcaster(pullRequestNumber);
+  } catch (error) {
+    logger.error({
+      jobId: job.id,
+      eventType,
+      attempt: getJobAttempt(job),
+      pr: pullRequestNumber,
+      statusCode: error.statusCode,
+      code: error.code,
+      error: error.message
+    }, '[worker] Stellar transaction submission failed');
+    throw error;
+  }
 
   try {
     const taskType = eventType || 'unknown';

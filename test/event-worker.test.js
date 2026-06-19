@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { buildGitHubPullRequestEventPayload } = require('../src/queue');
+const { logger } = require('../src/logger');
+const { StellarServiceUnavailableError } = require('../src/services/stellar-errors');
 const { processEventJob } = require('../src/workers/event-worker');
 
 function job(data) {
@@ -82,4 +84,46 @@ test('processEventJob registers metrics with task_type label', async () => {
   const latencyValue = await queue_latency_seconds.get();
   const latencyVal = latencyValue.values.find(v => v.labels.task_type === 'github.pull_request.merged');
   assert.ok(latencyVal);
+});
+
+test('processEventJob logs Stellar service failures before returning the job failure', async () => {
+  const errors = [];
+  const originalError = logger.error;
+  logger.error = (obj, msg) => {
+    errors.push({ obj, msg });
+  };
+
+  const payload = buildGitHubPullRequestEventPayload({
+    action: 'closed',
+    pull_request: {
+      number: 44,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    }
+  }, { deliveryId: 'delivery-worker-3' });
+
+  try {
+    await assert.rejects(
+      () => processEventJob(job(payload), {
+        registerTaskOnChain: async () => {
+          throw new StellarServiceUnavailableError('Stellar service temporarily unavailable', {
+            cause: new Error('Horizon request timed out'),
+            operation: 'submitTransaction'
+          });
+        }
+      }),
+      error => {
+        assert.equal(error.statusCode, 503);
+        assert.equal(error.code, 'STELLAR_SERVICE_UNAVAILABLE');
+        return true;
+      }
+    );
+  } finally {
+    logger.error = originalError;
+  }
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].msg, '[worker] Stellar transaction submission failed');
+  assert.equal(errors[0].obj.pr, 44);
+  assert.equal(errors[0].obj.statusCode, 503);
 });

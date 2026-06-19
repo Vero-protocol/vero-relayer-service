@@ -22,34 +22,34 @@ async function submitTransaction(transaction) {
 
   txLog.started({ account: publicKey }, '[stellar] Loading account with sequential nonce guarantee...');
 
-  return nonceManager.withSequentialNonce(
-    publicKey,
-    () => fetchAccount(server, publicKey),
-    async (account) => {
-      const tx = new TransactionBuilder(account, {
-        fee: transaction.fee,
-        networkPassphrase,
-      })
-        .addOperation(Operation.manageData({
-          name: transaction.key,
-          value: transaction.value,
-        }))
-        .setTimeout(30)
-        .build();
+  try {
+    return await nonceManager.withSequentialNonce(
+      publicKey,
+      () => fetchAccount(server, publicKey),
+      async (account) => {
+        const tx = new TransactionBuilder(account, {
+          fee: transaction.fee,
+          networkPassphrase,
+        })
+          .addOperation(Operation.manageData({
+            name: transaction.key,
+            value: transaction.value,
+          }))
+          .setTimeout(30)
+          .build();
 
-      tx.sign(keypair);
+        tx.sign(keypair);
 
-      txLog.submitting({ account: publicKey, fee: transaction.fee, feeSource: transaction.feeSource || 'default' }, '[stellar] Submitting transaction for PR...');
+        txLog.submitting({ account: publicKey, fee: transaction.fee, feeSource: transaction.feeSource || 'default' }, '[stellar] Submitting transaction for PR...');
 
-      try {
         const result = await broadcastTransaction(server, tx);
         return result;
-      } catch (error) {
-        txLog.failed({ account: publicKey }, error, '[stellar] Transaction submission failed');
-        throw error;
       }
-    }
-  );
+    );
+  } catch (error) {
+    txLog.failed({ account: publicKey, statusCode: error.statusCode, code: error.code }, error, '[stellar] Transaction submission failed');
+    throw error;
+  }
 }
 
 async function registerTaskOnChain(githubId, options = {}) {

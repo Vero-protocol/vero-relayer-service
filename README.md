@@ -90,6 +90,8 @@ Any payload where `action` is not `closed`, `merged` is not `true`, or the label
 
 Qualifying events return `202 Accepted` with `{ "ok": true, "pr": <number>, "queued": true, "jobId": "..." }` after the job is persisted to Redis.
 
+If the queue or backing infrastructure is temporarily unavailable while accepting a qualifying event, the webhook returns `503 Service Unavailable` with `{ "ok": false, "error": "service unavailable" }`.
+
 ---
 
 ## The Wave Program

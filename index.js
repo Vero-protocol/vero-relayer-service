@@ -9,6 +9,7 @@ const {
 const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
+const { getHttpStatusForError } = require('./src/services/stellar-errors');
 const { ingestRateLimiter } = require('./src/middleware/rateLimit');
 
 function createApp(options = {}) {
@@ -48,8 +49,12 @@ function createApp(options = {}) {
       logger.info({ pr: pr.number, eventType: eventPayload.eventType, jobId: job.id }, '[webhook] queued PR event');
       return res.status(202).json({ ok: true, pr: pr.number, queued: true, jobId: job.id });
     } catch (error) {
-      logger.error({ pr: pr.number, error: error.message }, '[webhook] failed to enqueue PR');
-      return res.status(500).json({ ok: false, error: 'failed to enqueue event' });
+      const statusCode = getHttpStatusForError(error);
+      logger.error({ pr: pr.number, statusCode, error: error.message }, '[webhook] failed to enqueue PR');
+      return res.status(statusCode).json({
+        ok: false,
+        error: statusCode === 503 ? 'service unavailable' : 'failed to enqueue event'
+      });
     }
   });
 
