@@ -92,6 +92,14 @@ Qualifying events return `202 Accepted` with `{ "ok": true, "pr": <number>, "que
 
 ---
 
+## Health Check
+
+`GET /health` is intended for orchestrator readiness probes. It runs bounded async checks for the Redis event queue, Stellar RPC, and local disk access. A healthy service returns `200` with `"status": "healthy"`; any failed, thrown, or timed-out check returns `503` with `"status": "degraded"`.
+
+The response includes only sanitized check names, statuses, and latency values. It does not include connection strings, credentials, host paths, or raw error messages.
+
+---
+
 ## The Wave Program
 
 The Wave Program works by having maintainers create scoped issues that contributors pick up during sprint cycles. Each sprint has a fixed window, typically two weeks, and a defined set of issues tagged `wave-contribution`. When a contributor's PR for one of those issues is merged, this service queues the event and records the contribution on-chain through the worker.
@@ -143,6 +151,7 @@ vero-relayer-service/
 | `REDIS_TLS` | No | Set to `true` to enable TLS |
 | `EVENT_QUEUE_NAME` | No | Defaults to `vero:event-processing` |
 | `EVENT_QUEUE_CONCURRENCY` | No | Worker concurrency, defaults to `5` |
+| `HEALTH_CHECK_TIMEOUT_MS` | No | Maximum time for `/health` checks before returning degraded, defaults to `1500` |
 | `OTEL_SERVICE_NAME` | No | Service name reported to the tracing backend |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | No | OTLP endpoint for exporting traces, such as Jaeger or Grafana |
 | `OTEL_SDK_DISABLED` | No | Set to `true` to disable tracing at startup |

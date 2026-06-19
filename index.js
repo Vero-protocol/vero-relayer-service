@@ -10,6 +10,7 @@ const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
 const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const { createHealthHandler } = require('./src/controllers/health');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
@@ -27,9 +28,10 @@ function createApp(options = {}) {
 
   registerMetrics(app);
 
-  app.get('/health', (req, res) => {
-    res.status(200).send('OK');
-  });
+  app.get('/health', createHealthHandler({
+    getHealthReport: options.getHealthReport,
+    timeoutMs: options.healthCheckTimeoutMs
+  }));
 
   // GitHub webhook endpoint — rate-limited before signature verification
   app.post('/github-webhook', ingestRateLimiter, verifySignature, async (req, res) => {
