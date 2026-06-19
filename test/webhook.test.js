@@ -42,8 +42,10 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
     pull_request: {
       number: 42,
       merged: true,
-      labels: [{ name: 'wave-contribution' }]
-    }
+      labels: [{ name: 'wave-contribution', color: '0e8a16' }],
+      html_url: 'https://github.com/Vero-protocol/vero-relayer-service/pull/42'
+    },
+    sender: { login: 'contributor' }
   });
 
   const response = await fetch(url(server, '/github-webhook'), {
@@ -63,6 +65,9 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
   assert.deepEqual(resBody, { ok: true, pr: 42, queued: true, jobId: 'job-42' });
   assert.equal(enqueuedEvents.length, 1);
   assert.equal(enqueuedEvents[0].payload.pull_request.number, 42);
+  assert.equal(enqueuedEvents[0].payload.pull_request.html_url, undefined);
+  assert.equal(enqueuedEvents[0].payload.pull_request.labels[0].color, undefined);
+  assert.equal(enqueuedEvents[0].payload.sender, undefined);
   assert.equal(enqueuedEvents[0].idempotencyKey, 'delivery-route');
   assert.equal(enqueuedEvents[0].requestId, 'request-route');
 });
@@ -95,6 +100,46 @@ test('github webhook keeps existing skipped response for non-qualifying events',
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { skipped: true });
+});
+
+test('github webhook rejects signed invalid payload before enqueue', async t => {
+  process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
+  t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
+
+  let enqueueCalled = false;
+  const app = createApp({
+    enqueueEventJob: async () => {
+      enqueueCalled = true;
+      throw new Error('should not enqueue invalid payloads');
+    }
+  });
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  const body = JSON.stringify({
+    action: 'closed',
+    pull_request: {
+      number: '42',
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    }
+  });
+
+  const response = await fetch(url(server, '/github-webhook'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hub-signature-256': sign(body)
+    },
+    body
+  });
+
+  const resBody = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(enqueueCalled, false);
+  assert.equal(resBody.error, 'Invalid webhook payload');
+  assert.ok(resBody.details.some(error => error.path === 'pull_request.number'));
 });
 
 test('github webhook rejects requests with invalid signature', async t => {

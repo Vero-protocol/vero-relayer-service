@@ -232,36 +232,36 @@ describe('validate() — negative cases', () => {
   });
 
   // ------------------------------------------------------------------
-  // Security: parameter injection — unknown properties must be rejected
+  // Security: parameter injection — unknown properties must be stripped
   // ------------------------------------------------------------------
-  test('rejects unknown top-level property (injection guard)', () => {
+  test('strips unknown top-level property (injection guard)', () => {
     const result = validate({ ...validPayload(), injected: 'evil' });
-    assert.equal(result.success, false);
-    assert.ok(result.errors.some(e => e.path === 'injected'));
+    assert.equal(result.success, true);
+    assert.equal(result.data.injected, undefined);
   });
 
-  test('rejects unknown property nested in pull_request', () => {
+  test('strips unknown property nested in pull_request', () => {
     const payload = validPayload();
     payload.pull_request.adminOverride = true;
     const result = validate(payload);
-    assert.equal(result.success, false);
-    assert.ok(result.errors.some(e => e.path.includes('adminOverride')));
+    assert.equal(result.success, true);
+    assert.equal(result.data.pull_request.adminOverride, undefined);
   });
 
-  test('rejects unknown property nested in repository', () => {
+  test('strips unknown property nested in repository', () => {
     const payload = validPayload();
     payload.repository.secret_token = 'abc';
     const result = validate(payload);
-    assert.equal(result.success, false);
-    assert.ok(result.errors.some(e => e.path.includes('secret_token')));
+    assert.equal(result.success, true);
+    assert.equal(result.data.repository.secret_token, undefined);
   });
 
-  test('rejects unknown property nested in label', () => {
+  test('strips unknown property nested in label', () => {
     const payload = validPayload();
     payload.pull_request.labels = [{ name: 'valid', exploit: 'x' }];
     const result = validate(payload);
-    assert.equal(result.success, false);
-    assert.ok(result.errors.some(e => e.path.includes('exploit')));
+    assert.equal(result.success, true);
+    assert.equal(result.data.pull_request.labels[0].exploit, undefined);
   });
 });
 
@@ -291,14 +291,14 @@ describe('validateTaskPayload() middleware', () => {
     assert.ok(res._body.details.length > 0);
   });
 
-  test('responds 400 on parameter injection attempt', () => {
+  test('strips parameter injection attempt before calling next()', () => {
     let nextCalled = false;
     const req = { body: { ...validPayload(), extraField: 'injected' } };
     const res = makeMockRes();
     validateTaskPayload(req, res, () => { nextCalled = true; });
-    assert.equal(nextCalled, false);
-    assert.equal(res._status, 400);
-    assert.ok(res._body.details.some(e => e.path === 'extraField'));
+    assert.equal(nextCalled, true);
+    assert.equal(res._status, null);
+    assert.equal(req.body.extraField, undefined);
   });
 
   test('responds 400 on null payload', () => {

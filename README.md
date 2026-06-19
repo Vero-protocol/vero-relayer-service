@@ -88,6 +88,8 @@ The service expects the standard GitHub `pull_request` event shape:
 
 Any payload where `action` is not `closed`, `merged` is not `true`, or the label is absent is silently skipped with `{ "skipped": true }`.
 
+Malformed payloads are rejected before queueing with `400 Bad Request` and structured validation details. The ingress validator requires a non-empty `action`, a positive integer `pull_request.number`, a boolean `pull_request.merged`, and string label names when labels are present. Extra webhook fields are ignored before the event is queued.
+
 Qualifying events return `202 Accepted` with `{ "ok": true, "pr": <number>, "queued": true, "jobId": "..." }` after the job is persisted to Redis.
 
 ---

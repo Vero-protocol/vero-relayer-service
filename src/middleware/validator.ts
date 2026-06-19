@@ -8,7 +8,7 @@ import type { Request, Response, NextFunction } from 'express';
 const LabelSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
   name: z.string().min(1, 'Label name must be a non-empty string'),
-}).strict();
+}).strip();
 
 const PullRequestSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
@@ -16,19 +16,19 @@ const PullRequestSchema = z.object({
   number: z.number().int('PR number must be an integer').positive('PR number must be positive'),
   merged: z.boolean({ required_error: 'merged is required', invalid_type_error: 'merged must be a boolean' }),
   labels: z.array(LabelSchema).default([]),
-}).strict();
+}).strip();
 
 const RepositorySchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
   name: z.string().optional(),
   full_name: z.string().optional(),
-}).strict();
+}).strip();
 
 export const TaskPayloadSchema = z.object({
   action: z.string({ required_error: 'action is required' }).trim().min(1, 'action must be a non-empty string'),
   pull_request: PullRequestSchema,
   repository: RepositorySchema.nullable().optional(),
-}).strict();
+}).strip();
 
 export type TaskPayload = z.infer<typeof TaskPayloadSchema>;
 
@@ -102,7 +102,7 @@ export function validateTaskPayload(req: Request, res: Response, next: NextFunct
 
   if (!result.success) {
     res.status(400).json({
-      error: 'Invalid task payload',
+      error: 'Invalid webhook payload',
       details: result.errors,
     });
     return;

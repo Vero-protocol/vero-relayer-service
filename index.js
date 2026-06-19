@@ -1,5 +1,6 @@
 const express = require('express');
 const { verifySignature } = require('./src/middleware/auth');
+const { validateTaskPayload } = require('./src/middleware/validator');
 const {
   buildGitHubPullRequestEventPayload,
   buildMetadataFromRequest,
@@ -32,7 +33,7 @@ function createApp(options = {}) {
   });
 
   // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, async (req, res) => {
+  app.post('/github-webhook', ingestRateLimiter, verifySignature, validateTaskPayload, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
