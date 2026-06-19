@@ -8,6 +8,8 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000, // Fail fast if connection cannot be established
 });
 
+let closePromise = null;
+
 // Health check function to verify pool connectivity
 async function healthCheck() {
   try {
@@ -30,7 +32,16 @@ pool.on('error', (err, client) => {
   console.error('[db] Unexpected error on idle client', err);
 });
 
+function closeDbPool() {
+  if (!closePromise) {
+    closePromise = pool.end();
+  }
+
+  return closePromise;
+}
+
 module.exports = {
+  closeDbPool,
   pool,
   healthCheck,
 };

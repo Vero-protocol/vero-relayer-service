@@ -17,6 +17,7 @@ const {
   queue_latency_seconds
 } = require('../metrics/metrics');
 const { startConfigPoller, stopConfigPoller } = require('../services/config-poller');
+const { closeDbPool } = require('../db/client');
 
 function getJobEventType(job) {
   return (job && job.data && job.data.eventType) || 'unknown';
@@ -96,6 +97,37 @@ function createEventWorker(options = {}) {
   return worker;
 }
 
+async function closeWorkerResources(worker, cleanupQueue) {
+  const failures = [];
+
+  try {
+    await worker.close();
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    failures.push(error);
+    logger.error({ resource: 'worker', error: message }, '[worker] Shutdown resource cleanup failed');
+  }
+
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => cleanupQueue.close()),
+    Promise.resolve().then(() => closeDbPool())
+  ]);
+  const resourceNames = ['cleanupQueue', 'dbPool'];
+
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      const error = result.reason;
+      const message = error && error.message ? error.message : String(error);
+      failures.push(error);
+      logger.error({ resource: resourceNames[index], error: message }, '[worker] Shutdown resource cleanup failed');
+    }
+  });
+
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'worker shutdown resource cleanup failed');
+  }
+}
+
 async function startEventWorker() {
   const queueName = getEventQueueName();
   const concurrency = getEventQueueConcurrency();
@@ -120,8 +152,7 @@ async function startEventWorker() {
     logger.info({ signal }, '[worker] Shutdown initiated');
     cleanupTask.stop();
     stopConfigPoller();
-    await cleanupQueue.close();
-    await worker.close();
+    await closeWorkerResources(worker, cleanupQueue);
     process.exit(0);
   }
 
@@ -150,6 +181,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  closeWorkerResources,
   createEventWorker,
   processEventJob,
   startEventWorker

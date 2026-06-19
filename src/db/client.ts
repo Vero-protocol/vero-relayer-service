@@ -18,10 +18,14 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000,
 });
 
-// Graceful shutdown – release all connections on SIGTERM.
-process.on("SIGTERM", async () => {
-  await pool.end();
-  process.exit(0);
-});
+let closePromise: Promise<void> | null = null;
+
+export function closeDbPool(): Promise<void> {
+  if (!closePromise) {
+    closePromise = pool.end();
+  }
+
+  return closePromise;
+}
 
 export default pool;

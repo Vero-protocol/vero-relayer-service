@@ -4,6 +4,9 @@ const { logger } = require('../logger');
 
 let pollerInterval = null;
 let redisClient = null;
+let stopped = true;
+let starting = false;
+let generation = 0;
 
 // Dynamic config cache
 const dynamicConfig = {};
@@ -41,12 +44,21 @@ async function pollConfig() {
 }
 
 function startConfigPoller() {
-  if (pollerInterval) return;
+  if (pollerInterval || starting) return;
 
+  stopped = false;
+  starting = true;
+  const startGeneration = ++generation;
   const intervalMs = Number(process.env.CONFIG_SYNC_INTERVAL_MS) || 5000;
   
   // Trigger initial poll
   pollConfig().then(() => {
+    starting = false;
+
+    if (stopped || pollerInterval || startGeneration !== generation) {
+      return;
+    }
+
     pollerInterval = setInterval(pollConfig, intervalMs);
     // Unref the interval so it doesn't block process exit in tests
     if (pollerInterval && typeof pollerInterval.unref === 'function') {
@@ -56,6 +68,10 @@ function startConfigPoller() {
 }
 
 function stopConfigPoller() {
+  stopped = true;
+  starting = false;
+  generation += 1;
+
   if (pollerInterval) {
     clearInterval(pollerInterval);
     pollerInterval = null;
