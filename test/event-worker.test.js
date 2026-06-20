@@ -106,8 +106,10 @@ test('processEventJob logs Stellar service failures before returning the job fai
     await assert.rejects(
       () => processEventJob(job(payload), {
         registerTaskOnChain: async () => {
+          const cause = new Error(`Horizon request timed out ${'S' + 'A'.repeat(55)}`);
+          cause.code = 'ETIMEDOUT';
           throw new StellarServiceUnavailableError('Stellar service temporarily unavailable', {
-            cause: new Error('Horizon request timed out'),
+            cause,
             operation: 'submitTransaction'
           });
         }
@@ -126,4 +128,8 @@ test('processEventJob logs Stellar service failures before returning the job fai
   assert.equal(errors[0].msg, '[worker] Stellar transaction submission failed');
   assert.equal(errors[0].obj.pr, 44);
   assert.equal(errors[0].obj.statusCode, 503);
+  assert.equal(errors[0].obj.code, 'STELLAR_SERVICE_UNAVAILABLE');
+  assert.equal(errors[0].obj.operation, 'submitTransaction');
+  assert.equal(errors[0].obj.causeCode, 'ETIMEDOUT');
+  assert.match(errors[0].obj.causeError, /\[Redacted\]/);
 });

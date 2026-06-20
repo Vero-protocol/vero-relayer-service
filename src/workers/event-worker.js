@@ -17,6 +17,7 @@ const {
   queue_latency_seconds
 } = require('../metrics/metrics');
 const { startConfigPoller, stopConfigPoller } = require('../services/config-poller');
+const { getSafeErrorMetadata } = require('../services/stellar-errors');
 
 function getJobEventType(job) {
   return (job && job.data && job.data.eventType) || 'unknown';
@@ -55,9 +56,7 @@ async function processEventJob(job, dependencies = {}) {
       eventType,
       attempt: getJobAttempt(job),
       pr: pullRequestNumber,
-      statusCode: error.statusCode,
-      code: error.code,
-      error: error.message
+      ...getSafeErrorMetadata(error)
     }, '[worker] Stellar transaction submission failed');
     throw error;
   }
