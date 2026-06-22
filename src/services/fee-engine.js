@@ -15,17 +15,32 @@ const CLASSIC_FEE_DISTRIBUTION = 'inclusionFee';
 
 const FEE_CACHE_TTL_MS = Number(process.env.RPC_CACHE_TTL_FEE) || 60_000;
 
-// Persistent Redis-backed cache for fee stats — survives restarts and is
-// shared across workers so repeated fee estimates hit the cache.
-const rpcCache = createRpcCache();
-const cachedGetFeeStats = rpcCache.wrap(
-  (client) => client.getFeeStats(),
-  {
-    keyPrefix: 'fee-stats',
-    ttlMs: FEE_CACHE_TTL_MS,
-    keyFn: () => 'global' // fee stats are network-wide, not per-account
+// Lazily-created Redis-backed cache for fee stats. Creating the cache
+// at module load can attempt to connect to Redis (causing ECONNREFUSED in
+// test environments), so defer creation until first use.
+let rpcCache = null;
+let cachedGetFeeStats = null;
+
+function getRpcCache() {
+  if (!rpcCache) {
+    rpcCache = createRpcCache();
   }
-);
+  return rpcCache;
+}
+
+function getCachedGetFeeStats() {
+  if (!cachedGetFeeStats) {
+    cachedGetFeeStats = getRpcCache().wrap(
+      (client) => client.getFeeStats(),
+      {
+        keyPrefix: 'fee-stats',
+        ttlMs: FEE_CACHE_TTL_MS,
+        keyFn: () => 'global' // fee stats are network-wide, not per-account
+      }
+    );
+  }
+  return cachedGetFeeStats;
+}
 
 let cachedEstimate = null;
 
@@ -320,7 +335,7 @@ async function estimateStellarFeeDetails(options = {}) {
     if (!client) {
       warn(logger, '[fee] Stellar RPC URL not configured; using fallback fee');
     } else {
-      const stats = await withTimeout(cachedGetFeeStats(client), config.timeoutMs);
+      const stats = await withTimeout(getCachedGetFeeStats()(client), config.timeoutMs);
       const feeFromStats = extractPercentileFee(stats, config.percentile);
 
       if (feeFromStats === null) {

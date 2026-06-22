@@ -1,16 +1,33 @@
-const client = require('prom-client');
+let client;
+try {
+  client = require('prom-client');
+} catch (e) {
+  // provide a lightweight stub so code can run in environments without prom-client
+  client = {
+    register: {
+      metrics: async () => '',
+      contentType: 'text/plain',
+      getSingleMetric: () => undefined,
+    },
+    collectDefaultMetrics: () => {},
+    Counter: class {
+      constructor() {}
+      inc() {}
+    },
+    Histogram: class {
+      constructor() {}
+      observe() {}
+    }
+  };
+}
 
 // Collect default metrics (process, memory, etc.).
 // Guard against duplicate collection when the module is imported multiple times
 try {
-  // Only call once — if a common metric like process_cpu_user_seconds_total
-  // already exists, assume default collection was registered previously.
   if (!client.register.getSingleMetric || !client.register.getSingleMetric('process_cpu_user_seconds_total')) {
     client.collectDefaultMetrics();
   }
 } catch (e) {
-  // Non-fatal: continue without default metrics if collection fails
-  // eslint-disable-next-line no-console
   console.warn('prom-client: failed to collect default metrics:', e && e.message);
 }
 
