@@ -3,7 +3,17 @@ use soroban_sdk::{contractimpl, panic_with_error, Address, Bytes, BytesN, Env, V
 use crate::errors::AdminError;
 use crate::types::{AdminAction, DataKey, MultisigAction};
 
+// Current layout version
+const LAYOUT_VERSION: u32 = 1;
+
 // ── Storage helpers ──────────────────────────────────────────────────────────
+
+pub fn get_layout_version(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LayoutVersion)
+        .unwrap_or(0)
+}
 
 pub fn get_admins(env: &Env) -> Vec<Address> {
     env.storage()
@@ -207,6 +217,7 @@ pub fn initialize(env: &Env, admins: Vec<Address>, threshold: u32) {
     if threshold == 0 || threshold as usize > admins.len() as usize {
         panic_with_error!(env, AdminError::InvalidThreshold);
     }
+    env.storage().instance().set(&DataKey::LayoutVersion, &LAYOUT_VERSION);
     env.storage().instance().set(&DataKey::Admins, &admins);
     env.storage().instance().set(&DataKey::Threshold, &threshold);
     env.storage().instance().set(&DataKey::Nonce, &0u64);

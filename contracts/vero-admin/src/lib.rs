@@ -6,7 +6,7 @@ mod types;
 
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 
-use admin::{approve_action, assert_is_admin, get_admins, get_threshold, initialize, propose_action};
+use admin::{approve_action, assert_is_admin, get_admins, get_layout_version, get_threshold, initialize, propose_action};
 use errors::AdminError;
 use types::AdminAction;
 
@@ -28,6 +28,10 @@ impl VeroAdminContract {
     }
 
     // ── Read helpers ─────────────────────────────────────────────────────────
+
+    pub fn get_layout_version(env: Env) -> u32 {
+        get_layout_version(&env)
+    }
 
     pub fn get_admins(env: Env) -> Vec<Address> {
         get_admins(&env)
@@ -183,5 +187,12 @@ mod tests {
         let (env, client, _admins) = setup(2, 3);
         let outsider = Address::generate(&env);
         client.propose_register_task(&outsider, &55u64);
+    }
+
+    #[test]
+    fn layout_version_is_set_correctly() {
+        let (env, client, _admins) = setup(2, 3);
+        // Layout version should be 1
+        assert_eq!(client.get_layout_version(), 1);
     }
 }

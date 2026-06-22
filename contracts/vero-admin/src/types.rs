@@ -29,6 +29,7 @@ pub struct MultisigAction {
 /// Top-level storage keys for instance (persistent) storage.
 #[contracttype]
 pub enum DataKey {
+    LayoutVersion,
     Admins,
     Threshold,
     Nonce,
