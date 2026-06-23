@@ -179,3 +179,50 @@ test('different IPs are rate-limited independently', async () => {
   const okB = await supertest(app).get('/ip-test').set('X-Forwarded-For', '10.2.0.2');
   assert.equal(okB.status, 200);
 });
+
+test('ingestRateLimiter respects RATE_LIMIT_PUBLIC_MAX env when reloaded (can trigger 429)', async () => {
+  // Temporarily set env to tighten public limit to 1 and reload module
+  const prev = process.env.RATE_LIMIT_PUBLIC_MAX;
+  process.env.RATE_LIMIT_PUBLIC_MAX = '1';
+
+  // Clear from require cache so module re-reads env
+  delete require.cache[require.resolve('../src/middleware/rateLimit')];
+  const reloaded = require('../src/middleware/rateLimit');
+
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(express.json());
+  app.get('/rl-test', reloaded.ingestRateLimiter, (_req, res) => res.status(200).json({ ok: true }));
+
+  // First request succeeds
+  const first = await supertest(app).get('/rl-test').set('X-Forwarded-For', '203.0.113.5');
+  assert.equal(first.status, 200);
+
+  // Second request from same IP should be limited
+  const second = await supertest(app).get('/rl-test').set('X-Forwarded-For', '203.0.113.5');
+  assert.equal(second.status, 429);
+  assert.equal(second.body.code, 'RATE_LIMIT_EXCEEDED');
+
+  // restore env
+  if (prev === undefined) {
+    delete process.env.RATE_LIMIT_PUBLIC_MAX;
+  } else {
+    process.env.RATE_LIMIT_PUBLIC_MAX = prev;
+  }
+  // clear cache so subsequent tests load original constants
+  delete require.cache[require.resolve('../src/middleware/rateLimit')];
+});
+
+test('X-Forwarded-For header is honored for client IP grouping', async () => {
+  const app = buildTestApp();
+
+  // Use two different client IPs in X-Forwarded-For; they should be treated separately
+  const a1 = await supertest(app).get('/test').set('X-Forwarded-For', '198.51.100.1');
+  assert.equal(a1.status, 200);
+
+  const a2 = await supertest(app).get('/test').set('X-Forwarded-For', '198.51.100.1');
+  assert.equal(a2.status, 200);
+
+  const b1 = await supertest(app).get('/test').set('X-Forwarded-For', '198.51.100.2');
+  assert.equal(b1.status, 200);
+});
