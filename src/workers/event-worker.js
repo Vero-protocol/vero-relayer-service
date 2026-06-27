@@ -17,6 +17,16 @@ const {
   queue_latency_seconds
 } = require('../metrics/metrics');
 const { startConfigPoller, stopConfigPoller } = require('../services/config-poller');
+const { runMigrations } = require('../db/run-migrations');
+const { startRetryWorker } = require('./retry-worker');
+const {
+  initRetryState,
+  recordRetry,
+  completeRetry,
+  failRetry
+} = require('../services/retry-tracker');
+
+const RETRY_JOB_TYPE = 'event-processing';
 
 function getJobEventType(job) {
   return (job && job.data && job.data.eventType) || 'unknown';
@@ -34,20 +44,51 @@ function getPullRequestNumber(data) {
 async function processEventJob(job, dependencies = {}) {
   const eventType = getJobEventType(job);
   const broadcaster = dependencies.registerTaskOnChain || registerTaskOnChain;
+  const jobId = job.id;
+  const maxAttempts = (job.opts && job.opts.attempts) || 5;
 
-  logger.info({ jobId: job.id, eventType, attempt: getJobAttempt(job) }, '[worker] Event processing started');
+  // Track this job in the retry state table (idempotent via ON CONFLICT)
+  try {
+    await initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts);
+  } catch (stateErr) {
+    logger.warn({ jobId, error: stateErr.message }, '[worker] Failed to init retry state (non-fatal)');
+  }
+
+  logger.info({ jobId, eventType, attempt: getJobAttempt(job) }, '[worker] Event processing started');
 
   if (eventType !== EVENT_TYPES.GITHUB_PULL_REQUEST_MERGED) {
+    // Unrecoverable — mark as completed so we don't retry
+    try {
+      await completeRetry(RETRY_JOB_TYPE, jobId);
+    } catch (_) { /* non-fatal */ }
     throw new UnrecoverableError(`Unsupported event type: ${eventType}`);
   }
 
   const pullRequestNumber = getPullRequestNumber(job.data);
 
   if (!Number.isInteger(pullRequestNumber)) {
+    try {
+      await completeRetry(RETRY_JOB_TYPE, jobId);
+    } catch (_) { /* non-fatal */ }
     throw new UnrecoverableError('Invalid event payload: missing pull request number');
   }
 
-  await broadcaster(pullRequestNumber);
+  try {
+    await broadcaster(pullRequestNumber);
+  } catch (broadcastErr) {
+    // Record the retry in PostgreSQL for persistence across restarts
+    try {
+      await recordRetry(RETRY_JOB_TYPE, jobId, broadcastErr.message);
+    } catch (recErr) {
+      logger.error({ jobId, error: recErr.message }, '[worker] Failed to record retry state');
+    }
+    throw broadcastErr; // Let BullMQ handle its own retry mechanism too
+  }
+
+  // Success — mark as completed in retry state
+  try {
+    await completeRetry(RETRY_JOB_TYPE, jobId);
+  } catch (_) { /* non-fatal */ }
 
   try {
     const taskType = eventType || 'unknown';
@@ -87,6 +128,15 @@ function createEventWorker(options = {}) {
     const eventType = job ? getJobEventType(job) : 'unknown';
     const attempt = job ? `${job.attemptsMade}/${(job.opts && job.opts.attempts) || 1}` : 'unknown';
     logger.error({ jobId, eventType, attempt, error: error.message }, '[worker] Job failed');
+
+    // Track in PostgreSQL retry state if not already tracked by processEventJob
+    // (This catches failures before processEventJob runs, e.g. job deserialization errors)
+    if (job && !(error instanceof UnrecoverableError)) {
+      const maxAttempts = (job.opts && job.opts.attempts) || 5;
+      initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts)
+        .then(() => recordRetry(RETRY_JOB_TYPE, jobId, error.message))
+        .catch(err => logger.error({ jobId, error: err.message }, '[worker] Failed to record retry in failed handler'));
+    }
   });
 
   worker.on('error', error => {
@@ -100,9 +150,27 @@ async function startEventWorker() {
   const queueName = getEventQueueName();
   const concurrency = getEventQueueConcurrency();
   const worker = createEventWorker({ queueName, concurrency });
+  let retryWorkerHandle = null;
   let closing = false;
 
+  // Run migrations to ensure retry_state table exists
+  try {
+    await runMigrations();
+    logger.info('[worker] Database migrations complete');
+  } catch (migrationErr) {
+    logger.warn({ error: migrationErr.message }, '[worker] Database migrations skipped (non-fatal)');
+  }
+
   startConfigPoller();
+
+  // Start the async retry worker that resumes retries after restart
+  try {
+    const { stop } = await startRetryWorker();
+    retryWorkerHandle = { stop };
+    logger.info('[worker] Retry worker started');
+  } catch (retryErr) {
+    logger.warn({ error: retryErr.message }, '[worker] Retry worker startup failed (non-fatal)');
+  }
 
   const cleanupQueue = createEventQueue();
   const cleanupTask = createCleanupJob(cleanupQueue, { logger });
@@ -120,6 +188,9 @@ async function startEventWorker() {
     logger.info({ signal }, '[worker] Shutdown initiated');
     cleanupTask.stop();
     stopConfigPoller();
+    if (retryWorkerHandle) {
+      retryWorkerHandle.stop();
+    }
     await cleanupQueue.close();
     await worker.close();
     process.exit(0);
