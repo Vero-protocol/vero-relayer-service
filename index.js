@@ -10,9 +10,11 @@ const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
 const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const { enforceIdempotency } = require('./src/middleware/idempotency');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
+  const idempotencyMiddleware = options.idempotencyMiddleware || enforceIdempotency;
   const app = express();
 
   // Trust the first proxy hop so X-Forwarded-For is used to resolve the real
@@ -32,7 +34,7 @@ function createApp(options = {}) {
   });
 
   // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, async (req, res) => {
+  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
