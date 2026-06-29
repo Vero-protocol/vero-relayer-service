@@ -111,7 +111,8 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
       'Content-Type': 'application/json',
       'X-GitHub-Delivery': 'delivery-route',
       'X-Request-ID': 'request-route',
-      'x-hub-signature-256': sign(body)
+      'x-hub-signature-256': sign(body),
+      'Idempotency-Key': 'delivery-route'
     },
     body
   });
@@ -133,7 +134,8 @@ test('github webhook keeps existing skipped response for non-qualifying events',
   const app = createApp({
     enqueueEventJob: async () => {
       throw new Error('should not enqueue skipped events');
-    }
+    },
+    idempotencyMiddleware: (_req, _res, next) => next(),
   });
   const server = await listen(app);
   t.after(() => close(server));
@@ -147,7 +149,8 @@ test('github webhook keeps existing skipped response for non-qualifying events',
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-hub-signature-256': sign(body)
+      'x-hub-signature-256': sign(body),
+      'Idempotency-Key': 'test-key-skip-non-qualifying'
     },
     body
   });
