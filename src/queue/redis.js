@@ -2,6 +2,8 @@ require('dotenv').config();
 
 const DEFAULT_QUEUE_NAME = 'vero:event-processing';
 const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_RETRY_ATTEMPTS = 5;
+const DEFAULT_RETRY_BACKOFF_DELAY = 5000;
 
 function requireValue(name, value) {
   if (!value || String(value).trim() === '') {
@@ -95,18 +97,56 @@ function getRedisConnectionOptions(env = process.env) {
   return connection;
 }
 
+function getEventQueueRetryAttempts(env = process.env) {
+  const rawAttempts = env.EVENT_QUEUE_RETRY_ATTEMPTS;
+
+  if (!rawAttempts) {
+    return DEFAULT_RETRY_ATTEMPTS;
+  }
+
+  const attempts = Number(rawAttempts);
+
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('EVENT_QUEUE_RETRY_ATTEMPTS must be a positive integer');
+  }
+
+  return attempts;
+}
+
+function getEventQueueRetryBackoffDelay(env = process.env) {
+  const rawDelay = env.EVENT_QUEUE_RETRY_BACKOFF_DELAY;
+
+  if (!rawDelay) {
+    return DEFAULT_RETRY_BACKOFF_DELAY;
+  }
+
+  const delay = Number(rawDelay);
+
+  if (!Number.isInteger(delay) || delay < 1) {
+    throw new Error('EVENT_QUEUE_RETRY_BACKOFF_DELAY must be a positive integer (milliseconds)');
+  }
+
+  return delay;
+}
+
 function validateRedisConfig(env = process.env) {
   getRedisConnectionOptions(env);
   getEventQueueConcurrency(env);
   getBullMqQueueSettings(getEventQueueName(env));
+  getEventQueueRetryAttempts(env);
+  getEventQueueRetryBackoffDelay(env);
 }
 
 module.exports = {
   DEFAULT_CONCURRENCY,
   DEFAULT_QUEUE_NAME,
+  DEFAULT_RETRY_ATTEMPTS,
+  DEFAULT_RETRY_BACKOFF_DELAY,
   getBullMqQueueSettings,
   getEventQueueConcurrency,
   getEventQueueName,
+  getEventQueueRetryAttempts,
+  getEventQueueRetryBackoffDelay,
   getRedisConnectionOptions,
   validateRedisConfig
 };
