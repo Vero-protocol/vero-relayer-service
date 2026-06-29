@@ -1,24 +1,35 @@
 const crypto = require('crypto');
 const { Queue } = require('bullmq');
 const { EVENT_TYPES } = require('./types');
-const { getBullMqQueueSettings, getEventQueueName, getRedisConnectionOptions } = require('./redis');
+const {
+  getBullMqQueueSettings,
+  getEventQueueName,
+  getRedisConnectionOptions,
+  getEventQueueRetryAttempts,
+  getEventQueueRetryBackoffDelay
+} = require('./redis');
 
 const EVENT_JOB_NAME = 'process-event';
-const DEFAULT_JOB_OPTIONS = Object.freeze({
-  attempts: 5,
-  backoff: {
-    type: 'exponential',
-    delay: 5000
-  },
-  removeOnComplete: {
-    age: 24 * 60 * 60,
-    count: 1000
-  },
-  removeOnFail: {
-    age: 7 * 24 * 60 * 60,
-    count: 5000
-  }
-});
+
+function getDefaultJobOptions(env = process.env) {
+  return Object.freeze({
+    attempts: getEventQueueRetryAttempts(env),
+    backoff: {
+      type: 'exponential',
+      delay: getEventQueueRetryBackoffDelay(env)
+    },
+    removeOnComplete: {
+      age: 24 * 60 * 60,
+      count: 1000
+    },
+    removeOnFail: {
+      age: 7 * 24 * 60 * 60,
+      count: 5000
+    }
+  });
+}
+
+const DEFAULT_JOB_OPTIONS = getDefaultJobOptions();
 
 let eventQueue;
 
@@ -27,7 +38,7 @@ function createEventQueue(options = {}) {
 
   return new Queue(settings.name, {
     connection: options.connection || getRedisConnectionOptions(options.env),
-    defaultJobOptions: DEFAULT_JOB_OPTIONS,
+    defaultJobOptions: getDefaultJobOptions(options.env),
     prefix: settings.prefix
   });
 }
