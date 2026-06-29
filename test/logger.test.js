@@ -86,6 +86,42 @@ test('logger redacts sensitive fields', () => {
   assert.ok(!serialized.includes('stellar-secret-value'));
 });
 
+test('error webhook alert is sent when error count crosses the configured threshold', async () => {
+  const originalFetch = global.fetch;
+  const requests = [];
+
+  global.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  try {
+    const { logger } = createMemoryLogger({
+      ERROR_ALERT_WEBHOOK_URL: 'https://example.com/alerts',
+      ERROR_ALERT_THRESHOLD: '2',
+      ERROR_ALERT_WINDOW_MS: '1000'
+    });
+
+    logger.error({ service: 'worker' }, 'first failure');
+    logger.error({ service: 'worker' }, 'second failure');
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, 'https://example.com/alerts');
+    const payload = JSON.parse(requests[0].options.body);
+    assert.equal(payload.alertType, 'error-spike');
+    assert.equal(payload.threshold, 2);
+    assert.equal(payload.count, 2);
+    assert.ok(payload.message.includes('second failure'));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('request logger attaches and logs request ID without headers or body', () => {
   const { logger, output } = createMemoryLogger();
   const middleware = requestLoggerMiddleware({ logger });

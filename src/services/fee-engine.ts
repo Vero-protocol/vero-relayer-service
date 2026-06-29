@@ -10,6 +10,12 @@ const DEFAULT_CACHE_MS = 0;
 const DEFAULT_TIMEOUT_MS = 3000;
 const CLASSIC_FEE_DISTRIBUTION = 'inclusionFee';
 
+// Persistent Redis-backed cache for fee stats.
+// Runtime implementation is in fee-engine.js which wraps getFeeStats with a
+// Redis-backed cache layer (see src/services/rpc-cache.js). This TS file
+// is type-checked only (noEmit: true) — the JS file is the runtime source.
+export const FEE_CACHE_TTL_MS = Number(process.env.RPC_CACHE_TTL_FEE) || 60_000;
+
 type FeeDistribution = {
   max?: string;
   min?: string;

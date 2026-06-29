@@ -39,8 +39,97 @@ function parseBoolean(value) {
   return String(value || '').toLowerCase() === 'true';
 }
 
+function parsePositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getErrorAlertConfig(env = process.env) {
+  const webhookUrl = env.ERROR_ALERT_WEBHOOK_URL || env.ALERT_WEBHOOK_URL || env.SLACK_WEBHOOK_URL || env.ALERT_SLACK_WEBHOOK_URL;
+
+  if (!webhookUrl) {
+    return null;
+  }
+
+  return {
+    webhookUrl,
+    threshold: parsePositiveNumber(env.ERROR_ALERT_THRESHOLD, 5),
+    windowMs: parsePositiveNumber(env.ERROR_ALERT_WINDOW_MS, 60_000)
+  };
+}
+
+function createErrorAlertHook(options = {}) {
+  const env = options.env || process.env;
+  const config = getErrorAlertConfig(env);
+
+  if (!config) {
+    return undefined;
+  }
+
+  let errorCount = 0;
+  let windowStart = 0;
+  let lastAlertAt = 0;
+
+  return function logMethod(args, method, level) {
+    if (typeof method !== 'function') {
+      return method;
+    }
+
+    if (level < 50) {
+      return method.apply(this, args);
+    }
+
+    const now = Date.now();
+
+    if (!windowStart || now - windowStart >= config.windowMs) {
+      windowStart = now;
+      errorCount = 0;
+    }
+
+    errorCount += 1;
+
+    if (errorCount < config.threshold || (lastAlertAt && now - lastAlertAt < config.windowMs)) {
+      return method.apply(this, args);
+    }
+
+    lastAlertAt = now;
+
+    const stringArg = args.find(arg => typeof arg === 'string');
+    const objectArg = args.find(arg => arg && typeof arg === 'object' && typeof arg.message === 'string');
+    const message = stringArg
+      || (objectArg && objectArg.message)
+      || 'Error spike detected';
+
+    const payload = {
+      alertType: 'error-spike',
+      threshold: config.threshold,
+      count: errorCount,
+      windowMs: config.windowMs,
+      message,
+      timestamp: new Date(now).toISOString()
+    };
+
+    setImmediate(async () => {
+      try {
+        await fetch(config.webhookUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (_) {
+        // Intentionally swallow alert delivery errors so logging remains non-blocking.
+      }
+    });
+
+    return method.apply(this, args);
+  };
+}
+
 function createLogger(options = {}) {
   const env = options.env || process.env;
+  const errorAlertHook = createErrorAlertHook({ env });
   const loggerOptions = {
     level: env.LOG_LEVEL || 'info',
     messageKey: 'message',
@@ -54,7 +143,8 @@ function createLogger(options = {}) {
       level(label) {
         return { level: label };
       }
-    }
+    },
+    ...(errorAlertHook ? { hooks: { logMethod: errorAlertHook } } : {})
   };
 
   return pino(loggerOptions, options.stream);

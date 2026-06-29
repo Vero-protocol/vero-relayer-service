@@ -2,8 +2,10 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const crypto = require('node:crypto');
 const { createApp } = require('../index');
+const { signJwt } = require('../src/services/jwt');
 
 const TEST_SECRET = 'test-webhook-secret';
+const TEST_JWT_SECRET = 'test-jwt-secret-32-chars-long-0000000000';
 
 function sign(body) {
   return 'sha256=' + crypto.createHmac('sha256', TEST_SECRET).update(body).digest('hex');
@@ -23,6 +25,62 @@ function url(server, path) {
   return `http://127.0.0.1:${server.address().port}${path}`;
 }
 
+test('internal replay endpoint requires JWT auth and requeues stored payloads', async t => {
+  process.env.JWT_SIGNING_SECRET = TEST_JWT_SECRET;
+  process.env.JWT_ISSUER = 'vero-relayer-service';
+  t.after(() => {
+    delete process.env.JWT_SIGNING_SECRET;
+    delete process.env.JWT_ISSUER;
+  });
+
+  const rawEvent = {
+    action: 'closed',
+    pull_request: {
+      number: 99,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    },
+    repository: { id: 123, full_name: 'Vero-protocol/vero-relayer-service' }
+  };
+
+  const jwt = signJwt({ sub: 'internal-service', role: 'internal' }, { expiresInSeconds: 60 });
+  let replayed = false;
+
+  const app = createApp({
+    fetchRawEvent: async key => {
+      if (key === 'delivery-99') {
+        return { rawEvent, metadata: { deliveryId: 'delivery-99', requestId: 'req-99' } };
+      }
+      return null;
+    },
+    enqueueEventJob: async eventPayload => {
+      replayed = true;
+      assert.equal(eventPayload.payload.pull_request.number, 99);
+      return { id: 'replay-job-99' };
+    }
+  });
+
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  const response = await fetch(url(server, '/internal/webhooks/replay'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`
+    },
+    body: JSON.stringify({ idempotencyKey: 'delivery-99' })
+  });
+
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(body.ok, true);
+  assert.equal(body.replayed, true);
+  assert.equal(body.jobId, 'replay-job-99');
+  assert.ok(replayed);
+});
+
 test('github webhook enqueues qualifying events instead of broadcasting synchronously', async t => {
   process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
   t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
@@ -33,7 +91,7 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
       enqueuedEvents.push(eventPayload);
       return { id: 'job-42' };
     },
-    idempotencyMiddleware: (_req, _res, next) => next(),
+    storeRawEvent: async () => 'delivery-route'
   });
   const server = await listen(app);
   t.after(() => close(server));

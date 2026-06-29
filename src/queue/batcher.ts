@@ -3,14 +3,18 @@
  *
  * Aggregates incoming PR IDs and flushes them as a single multi-op
  * transaction when either:
- *   - MAX_BATCH_SIZE events have accumulated, or
+ *   - the adaptive batch size limit has been reached, or
  *   - WINDOW_MS milliseconds have elapsed since the first enqueue.
+ *
+ * Batch size is managed by BatchSizer, which scales it up when the
+ * queue is deep and scales it down when the error rate is elevated.
  *
  * Security: MAX_BATCH_SIZE caps batch size to prevent transaction bloat
  * (Stellar enforces a hard limit of 100 ops per transaction).
  */
 
 const { logger } = require('../logger');
+const { createBatchSizer } = require('../services/batch-sizer');
 
 type FlushFn = (ids: number[]) => Promise<void>;
 
@@ -20,6 +24,9 @@ const WINDOW_MS = 5_000;   // 5-second aggregation window
 export class EventBatcher {
   private queue: number[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private errorCount = 0;
+  private flushCount = 0;
+  private readonly sizer = createBatchSizer({ maxBatchSize: MAX_BATCH_SIZE });
 
   constructor(private readonly flush: FlushFn) {}
 
@@ -28,9 +35,15 @@ export class EventBatcher {
     if (!this.timer) {
       this.timer = setTimeout(() => this.drain(), WINDOW_MS);
     }
-    if (this.queue.length >= MAX_BATCH_SIZE) {
+    const batchSize = this.sizer.next(this.queue.length, this._errorRate());
+    if (this.queue.length >= batchSize) {
       this.drain();
     }
+  }
+
+  private _errorRate(): number {
+    const total = this.flushCount;
+    return total === 0 ? 0 : this.errorCount / total;
   }
 
   private drain(): void {
@@ -40,8 +53,10 @@ export class EventBatcher {
     }
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
-    this.flush(batch).catch(err =>
-      logger.error({ err }, '[batcher] flush error')
-    );
+    this.flushCount += 1;
+    this.flush(batch).catch(err => {
+      this.errorCount += 1;
+      logger.error({ err }, '[batcher] flush error');
+    });
   }
 }

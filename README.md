@@ -143,8 +143,11 @@ vero-relayer-service/
 | `REDIS_TLS` | No | Set to `true` to enable TLS |
 | `EVENT_QUEUE_NAME` | No | Defaults to `vero:event-processing` |
 | `EVENT_QUEUE_CONCURRENCY` | No | Worker concurrency, defaults to `5` |
+| `EVENT_PAYLOAD_RETENTION_DAYS` | No | Raw webhook payload retention in days, defaults to `7` |
 | `OTEL_SERVICE_NAME` | No | Service name reported to the tracing backend |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | No | OTLP endpoint for exporting traces, such as Jaeger or Grafana |
+| `RPC_CACHE_TTL_FEE` | No | TTL (ms) for cached fee stats responses. Defaults to `60000` (60s) |
+| `RPC_CACHE_TTL_ACCOUNT` | No | TTL (ms) for cached account lookups. Defaults to `10000` (10s) |
 | `OTEL_SDK_DISABLED` | No | Set to `true` to disable tracing at startup |
 
 ---
