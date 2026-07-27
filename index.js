@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { verifySignature } = require('./src/middleware/auth');
 const { verifyJwtBearer } = require('./src/middleware/jwt-auth');
+const { validateTaskPayload } = require('./src/middleware/validator');
 const {
   buildGitHubPullRequestEventPayload,
   buildMetadataFromRequest,
@@ -72,8 +73,13 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // GitHub webhook — middleware order is intentional:
+  //   rate-limit → signature verify → payload validate → idempotency dedupe → handler
+  // Validate comes after signature verification (trust) and BEFORE idempotency
+  // dedupe so that malformed payloads are rejected with 400 instead of being
+  // silently remembered under their Idempotency-Key (which would later return
+  // a confusing 409 instead of 400).
+  app.post('/github-webhook', ingestRateLimiter, verifySignature, validateTaskPayload, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
@@ -97,6 +103,10 @@ function createApp(options = {}) {
     }
   });
 
+  // Internal replay endpoint reads a previously-ingested payload from the raw
+  // event store. Such payloads were already validated at ingest time and are
+  // fetched by Idempotency-Key from Redis, so we intentionally do NOT re-run
+  // validateTaskPayload here — the Idempotency-Key is the sole input.
   app.post('/internal/webhooks/replay', verifyJwtBearer, async (req, res) => {
     const { idempotencyKey } = req.body;
 
