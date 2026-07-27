@@ -132,13 +132,22 @@ const AUTH_MAX         = Number(process.env.RATE_LIMIT_AUTH_MAX)     || 1_000;
 // ---------------------------------------------------------------------------
 
 /**
- * Returns an IPv6-safe client key using the express-rate-limit ipKeyGenerator.
- * Falls back to the raw socket address for local / test environments where
- * req.ip may not be set.
+ * Returns a string key for the current request, normalised through
+ * express-rate-limit's ipKeyGenerator so IPv6 subnets cannot bypass the
+ * limit via address formatting tricks.
+ *
+ * NOTE: ipKeyGenerator in express-rate-limit v8+ accepts a string IP
+ * address — NOT a request object. Passing the request object previously
+ * caused it to return an object like `{ ip: '...' }`, which broke default
+ * Map-based stores (each request produced a new object reference and so
+ * never accumulated). Callers must extract `req.ip` first.
+ *
+ * Falls back to the raw socket address when req.ip is not yet populated
+ * (e.g. local / test environments where trust proxy is not configured).
  */
 function clientIp(req) {
   if (req.ip) {
-    return ipKeyGenerator(req);
+    return ipKeyGenerator(req.ip);
   }
   return req.socket?.remoteAddress || 'unknown';
 }
