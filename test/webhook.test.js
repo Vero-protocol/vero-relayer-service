@@ -201,3 +201,85 @@ test('github webhook rejects requests with missing signature', async t => {
 
   assert.equal(response.status, 401);
 });
+
+test('github webhook rejects signature-valid but structurally invalid payloads with 400', async t => {
+  process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
+  t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
+
+  const app = createApp({
+    enqueueEventJob: async () => { throw new Error('should not reach enqueue on invalid payload'); },
+    idempotencyMiddleware: (_req, _res, next) => next(),
+  });
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  // Signature is valid (so verifySignature passes) but the payload
+  // violates the TaskPayloadSchema: PR number is a string instead of int.
+  const body = JSON.stringify({
+    action: 'closed',
+    pull_request: {
+      number: 'not-an-integer',
+      merged: true,
+      labels: [{ name: 'wave-contribution' }],
+    },
+  });
+
+  const response = await fetch(url(server, '/github-webhook'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hub-signature-256': sign(body),
+      'Idempotency-Key': 'invalid-payload-key',
+    },
+    body,
+  });
+
+  const resBody = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(resBody.error, 'Invalid task payload');
+  assert.ok(Array.isArray(resBody.details));
+  assert.ok(
+    resBody.details.some(d => d.path === 'pull_request.number'),
+    'expected pull_request.number validation error'
+  );
+});
+
+test('github webhook rejects payloads with unknown top-level keys (injection guard)', async t => {
+  process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
+  t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
+
+  const app = createApp({
+    enqueueEventJob: async () => { throw new Error('should not reach enqueue on invalid payload'); },
+    idempotencyMiddleware: (_req, _res, next) => next(),
+  });
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  const validPayload = {
+    action: 'closed',
+    pull_request: {
+      number: 42,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }],
+    },
+  };
+  // Inject an extra top-level key that the strict schema rejects.
+  const body = JSON.stringify({ ...validPayload, evilProperty: 'injected' });
+
+  const response = await fetch(url(server, '/github-webhook'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-hub-signature-256': sign(body),
+      'Idempotency-Key': 'unknown-key-payload-key',
+    },
+    body,
+  });
+
+  assert.equal(response.status, 400);
+  const resBody = await response.json();
+  assert.ok(
+    resBody.details.some(d => d.path === 'evilProperty'),
+    'expected evilProperty validation error'
+  );
+});
