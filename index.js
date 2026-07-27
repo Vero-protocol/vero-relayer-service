@@ -97,7 +97,9 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/internal/webhooks/replay', verifyJwtBearer, async (req, res) => {
+  // Internal replay endpoint — rate-limited before JWT verification so a
+  // compromised/leaked internal token cannot replay-flood the queue path.
+  app.post('/internal/webhooks/replay', ingestRateLimiter, verifyJwtBearer, async (req, res) => {
     const { idempotencyKey } = req.body;
 
     if (!idempotencyKey || typeof idempotencyKey !== 'string') {
