@@ -19,7 +19,7 @@
     "@opentelemetry/auto-instrumentations-node": "^0.79.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/sdk-node": "^0.221.0",
-    "@stellar/stellar-sdk": "16.1.0",
+    "@stellar/stellar-sdk": "16.2.0",
     "bullmq": "^5.81.2",
     "dotenv": "17.4.2",
     "express": "5.2.1",
