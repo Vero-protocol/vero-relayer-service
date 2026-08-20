@@ -208,7 +208,7 @@ Expected results:
 - Zero failures under normal load
 - Graceful queuing when pool saturated
 
-For detailed configuration and usage patterns, see [docs/database-pooling.md](docs/database-pooling.md).
+For detailed configuration and usage patterns, see [docs/database-pooling.md](docs/database-pooling.md). For a quick cheat sheet, see [docs/POOL-QUICK-REFERENCE.md](docs/POOL-QUICK-REFERENCE.md).
 
 ---
 
