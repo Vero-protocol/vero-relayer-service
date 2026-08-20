@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { registerTaskOnChain } = require('../stellar');
+const { registerTaskOnChain } = require('../src/services/stellar');
 const { logger } = require('../src/logger');
 
 test('registerTaskOnChain estimates fee before transaction submission', async () => {
