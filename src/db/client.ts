@@ -34,14 +34,14 @@ interface PoolMetrics {
   totalConnections: number;
   idleConnections: number;
   waitingClients: number;
-  errors: number;
+  totalErrors: number;
 }
 
 const poolMetrics: PoolMetrics = {
   totalConnections: 0,
   idleConnections: 0,
   waitingClients: 0,
-  errors: 0,
+  totalErrors: 0,
 };
 
 // Update metrics on connection lifecycle events
@@ -87,12 +87,12 @@ pool.on("remove", (client: PoolClient) => {
 
 // Handle errors on idle clients (connection failures, network issues)
 pool.on("error", (err: Error, client: PoolClient) => {
-  poolMetrics.errors++;
+  poolMetrics.totalErrors++;
   logger.error(
     {
       error: err.message,
       code: (err as any).code,
-      totalErrors: poolMetrics.errors,
+      totalErrors: poolMetrics.totalErrors,
     },
     "[db] Unexpected error on idle client"
   );
@@ -164,9 +164,9 @@ export function getPoolMetrics(): PoolMetrics & {
     totalConnections: pool.totalCount,
     idleConnections: pool.idleCount,
     waitingClients: pool.waitingCount,
-    maxConnections: pool.options.max,
-    minConnections: pool.options.min,
-    totalErrors: poolMetrics.errors,
+    maxConnections: pool.options.max ?? 20,
+    minConnections: pool.options.min ?? 2,
+    totalErrors: poolMetrics.totalErrors,
   };
 }
 

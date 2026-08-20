@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/queue/batcher.ts", "src/workers/cleanup.ts"]
+  "include": ["src/**/*.ts"]
 }

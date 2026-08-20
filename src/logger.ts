@@ -90,7 +90,7 @@ function createErrorAlertHook(options: { env?: Env } = {}) {
   let windowStart = 0;
   let lastAlertAt = 0;
 
-  return function logMethod(args: unknown[], method: (this: Logger, ...args: unknown[]) => void, level: number) {
+  return function logMethod(this: Logger, args: unknown[], method: (this: Logger, ...args: unknown[]) => void, level: number) {
     if (typeof method !== 'function') {
       return;
     }
