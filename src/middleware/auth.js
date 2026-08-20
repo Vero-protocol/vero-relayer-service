@@ -24,6 +24,7 @@ function verifySignature(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
+  req.authenticated = true;
   next();
 }
 

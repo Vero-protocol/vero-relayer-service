@@ -73,8 +73,8 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // GitHub webhook endpoint — signature verified before rate limiting
+  app.post('/github-webhook', verifySignature, ingestRateLimiter, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });

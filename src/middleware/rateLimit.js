@@ -169,12 +169,15 @@ function clientIp(req) {
  *   - An X-Vero-Signature header (Vero HMAC signature).
  */
 function isAuthenticated(req) {
+  if (req.authenticated === true) {
+    return true;
+  }
   const headers = req.headers || {};
-  return !!(
-    headers['authorization'] ||
-    headers['x-hub-signature-256'] ||
-    headers['x-vero-signature']
-  );
+  const authHeader = headers['authorization'];
+  if (authHeader && authHeader.trim().length > 0) {
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

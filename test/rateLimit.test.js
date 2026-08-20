@@ -37,13 +37,13 @@ test('isAuthenticated returns true for Authorization header (JWT Bearer)', () =>
   assert.ok(isAuthenticated(req));
 });
 
-test('isAuthenticated returns true for x-hub-signature-256 header (GitHub HMAC)', () => {
+test('isAuthenticated returns false for unverified x-hub-signature-256 header (GitHub HMAC)', () => {
   const req = { headers: { 'x-hub-signature-256': 'sha256=abc123' } };
-  assert.ok(isAuthenticated(req));
+  assert.equal(isAuthenticated(req), false);
 });
 
-test('isAuthenticated returns true for x-vero-signature header', () => {
-  const req = { headers: { 'x-vero-signature': 'sha256=abc123' } };
+test('isAuthenticated returns true when req.authenticated is set by verified signature', () => {
+  const req = { headers: { 'x-hub-signature-256': 'sha256=abc123' }, authenticated: true };
   assert.ok(isAuthenticated(req));
 });
 
@@ -243,4 +243,9 @@ test('X-Forwarded-For header is honored for client IP grouping', async () => {
 
   const b1 = await supertest(app).get('/test').set('X-Forwarded-For', '198.51.100.2');
   assert.equal(b1.status, 200);
+});
+
+test('request with garbage signature header falls back to public rate limit bucket', async () => {
+  const req = { headers: { 'x-hub-signature-256': 'sha256=invalid_garbage_signature' } };
+  assert.equal(isAuthenticated(req), false, 'Garbage signature must not bypass public rate limit bucket');
 });
