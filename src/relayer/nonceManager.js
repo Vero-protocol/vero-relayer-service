@@ -1,4 +1,6 @@
 
+'use strict';
+
 const { pool } = require('../db/client');
 const { logger } = require('../logger');
 
@@ -23,36 +25,42 @@ function accountToLockKey(accountId) {
  * using PostgreSQL advisory locks to serialize access per account.
  */
 class NonceManager {
+  constructor(options = {}) {
+    this.pool = options.pool || pool;
+    this.logger = options.logger || logger;
+  }
+
   /**
    * Executes a transaction with guaranteed sequential nonce ordering for the given account.
    * @param accountId - Stellar account ID to lock on
-   * @param fetchAccountFn - Function to fetch the latest account from Horizon
+   * @param fetchAccountFn - Function that fetches the latest account from Horizon and accepts fetch options
    * @param buildAndSubmitFn - Function that takes the account and submits the transaction
    */
   async withSequentialNonce(accountId, fetchAccountFn, buildAndSubmitFn) {
     const lockKey = accountToLockKey(accountId);
-    const client = await pool.connect();
+    const client = await this.pool.connect();
 
     try {
-      logger.debug({ accountId, lockKey }, '[nonceManager] Acquiring advisory lock');
+      this.logger.debug({ accountId, lockKey }, '[nonceManager] Acquiring advisory lock');
       await client.query('SELECT pg_advisory_lock($1)', [lockKey]);
-      logger.debug({ accountId, lockKey }, '[nonceManager] Advisory lock acquired');
+      this.logger.debug({ accountId, lockKey }, '[nonceManager] Advisory lock acquired');
 
-      // Fetch latest account from Horizon while holding the lock
-      const account = await fetchAccountFn();
-      logger.debug({ accountId, sequence: account.sequence }, '[nonceManager] Fetched latest nonce');
+      // Always fetch live account state while holding the lock. Cached account
+      // snapshots can contain a sequence number consumed by the previous holder.
+      const account = await fetchAccountFn({ bypassCache: true });
+      this.logger.debug({ accountId, sequence: account.sequence }, '[nonceManager] Fetched latest nonce');
 
       // Build and submit transaction
       const result = await buildAndSubmitFn(account);
 
-      logger.debug({ accountId, lockKey }, '[nonceManager] Transaction submitted, releasing lock');
+      this.logger.debug({ accountId, lockKey }, '[nonceManager] Transaction submitted, releasing lock');
       return result;
     } finally {
       try {
         await client.query('SELECT pg_advisory_unlock($1)', [lockKey]);
-        logger.debug({ accountId, lockKey }, '[nonceManager] Advisory lock released');
+        this.logger.debug({ accountId, lockKey }, '[nonceManager] Advisory lock released');
       } catch (unlockError) {
-        logger.error({ error: unlockError, accountId, lockKey }, '[nonceManager] Failed to release advisory lock');
+        this.logger.error({ error: unlockError, accountId, lockKey }, '[nonceManager] Failed to release advisory lock');
       } finally {
         client.release();
       }
@@ -61,3 +69,5 @@ class NonceManager {
 }
 
 module.exports = new NonceManager();
+module.exports.NonceManager = NonceManager;
+module.exports.accountToLockKey = accountToLockKey;
