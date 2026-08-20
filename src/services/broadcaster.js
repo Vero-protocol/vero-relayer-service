@@ -1,3 +1,4 @@
+
 const { retry } = require('../utils/retry');
 const { transactionLogger } = require('./transaction-logger');
 const { createRpcCache } = require('./rpc-cache');
@@ -16,6 +17,26 @@ function getRpcCache() {
   return rpcCache;
 }
 
+/**
+ * Load the latest account state directly from Horizon, with retries.
+ *
+ * This live path must be used while the sequential-nonce advisory lock is
+ * held. Serving a cached account there can reuse a sequence number that a
+ * previous locked transaction has already consumed.
+ */
+async function loadAccount(server, accountId) {
+  return retry(
+    () => server.loadAccount(accountId),
+    {
+      maxRetries: 3,
+      baseDelay: 500,
+      onRetry: ({ attempt, delay, error }) => {
+        transactionLogger.retrying({ attempt: attempt + 1, delay, account: accountId }, error, '[broadcaster] Account fetch retry');
+      },
+    }
+  );
+}
+
 // Wrapped fetch function — created once at module scope so the closure
 // and Redis error handlers are not re-allocated on every call.
 let cachedFetchAccount = null;
@@ -23,17 +44,7 @@ let cachedFetchAccount = null;
 function getCachedFetchAccount() {
   if (!cachedFetchAccount) {
     cachedFetchAccount = getRpcCache().wrap(
-      (server, accountId) =>
-        retry(
-          () => server.loadAccount(accountId),
-          {
-            maxRetries: 3,
-            baseDelay: 500,
-            onRetry: ({ attempt, delay, error }) => {
-              transactionLogger.retrying({ attempt: attempt + 1, delay, account: accountId }, error, '[broadcaster] Account fetch retry');
-            },
-          }
-        ),
+      loadAccount,
       {
         keyPrefix: 'account',
         ttlMs: ACCOUNT_CACHE_TTL_MS,
@@ -46,7 +57,7 @@ function getCachedFetchAccount() {
 
 async function broadcastTransaction(server, transaction) {
   return retry(
-    async (attempt) => {
+    async () => {
       const result = await server.submitTransaction(transaction);
       if (!result.hash) {
         throw new Error('Transaction submission returned no hash');
@@ -64,17 +75,21 @@ async function broadcastTransaction(server, transaction) {
 }
 
 /**
- * Fetch a Stellar account, with Redis caching to reduce RPC calls.
+ * Fetch a Stellar account.
  *
- * Cache TTL is intentionally short (default 10s) because the account sequence
- * number advances after every transaction. Longer TTLs risk sequence-number
- * conflicts on concurrent submissions.
+ * Account reads are cached by default to reduce Horizon traffic. Callers that
+ * hold the sequential-nonce advisory lock must pass `{ bypassCache: true }`
+ * so every transaction observes the latest on-chain sequence number.
  *
- * The cache key incorporates the network so testnet and mainnet lookups
- * never collide, and the account id so different accounts are cached
- * independently.
+ * @param {object} server Horizon server instance
+ * @param {string} accountId Stellar account ID
+ * @param {object} [options]
+ * @param {boolean} [options.bypassCache=false] Skip Redis and load live state
  */
-async function fetchAccount(server, accountId) {
+async function fetchAccount(server, accountId, options = {}) {
+  if (options.bypassCache === true) {
+    return loadAccount(server, accountId);
+  }
   return getCachedFetchAccount()(server, accountId);
 }
 
