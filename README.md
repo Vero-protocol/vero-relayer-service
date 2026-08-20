@@ -373,3 +373,7 @@ contracts/vero-admin/
 cd contracts/vero-admin
 cargo test
 ```
+
+## Community & Code of Conduct
+
+We are committed to providing a welcoming and inspiring community for all. Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
