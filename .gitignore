@@ -1,2 +1,18 @@
 node_modules/
 .env
+
+# Rust build output (see #185 for removing already-tracked artifacts)
+target/
+
+# JS/TS build output
+dist/
+
+# Test/coverage output
+coverage/
+
+# Logs
+*.log
+
+# OS/editor cruft
+.DS_Store
+*.swp
