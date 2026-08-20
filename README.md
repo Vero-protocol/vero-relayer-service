@@ -134,6 +134,8 @@ vero-relayer-service/
 | `LOG_LEVEL` | No | Pino log level, defaults to `info` |
 | `LOG_REDACT_REMOVE` | No | Set to `true` to remove redacted fields instead of replacing with `[Redacted]` |
 | `ENABLE_HTTP_REQUEST_LOGS` | No | Set to `false` to disable automatic request completion logs |
+| `GITHUB_WEBHOOK_SECRET` | Yes* | Secret used to verify GitHub webhook signatures; may only be omitted when `ALLOW_UNSIGNED_WEBHOOKS=true` |
+| `ALLOW_UNSIGNED_WEBHOOKS` | No | Set explicitly to `true` to accept unsigned webhooks when no secret is configured; intended only for controlled local development and logs a security warning for every request |
 | `STELLAR_SECRET_KEY` | Yes | Signing key for the relayer account |
 | `STELLAR_NETWORK` | No | `testnet` (default) or `mainnet` |
 | `DATABASE_URL` | Yes | PostgreSQL connection string (takes precedence over individual params) |
