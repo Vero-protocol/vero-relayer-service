@@ -13,7 +13,10 @@ const { registerMetrics } = require('./src/metrics/metrics');
 const { enforceIdempotency } = require('./src/middleware/idempotency');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
-const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const {
+  publicRateLimiter,
+  authenticatedRateLimiter,
+} = require('./src/middleware/rateLimit');
 const { runMigrations } = require('./src/db/run-migrations');
 const { healthCheck: dbHealthCheck, getPoolMetrics } = require('./src/db/client');
 const { sendError } = require('./src/utils/http-errors');
@@ -73,8 +76,10 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // The public limiter classifies once and skips verified requests; the auth
+  // limiter has the inverse skip rule. Enforcement remains after both so
+  // invalid attempts consume public quota before rejection.
+  app.post('/github-webhook', publicRateLimiter, authenticatedRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
