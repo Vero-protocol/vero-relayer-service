@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const { Keypair, TransactionBuilder, Networks, Operation } = require('@stellar/stellar-sdk');
 const { broadcastTransaction, fetchAccount } = require('./broadcaster');
@@ -24,7 +25,7 @@ async function submitTransaction(transaction) {
 
   return nonceManager.withSequentialNonce(
     publicKey,
-    () => fetchAccount(server, publicKey),
+    (options) => fetchAccount(server, publicKey, options),
     async (account) => {
       const tx = new TransactionBuilder(account, {
         fee: transaction.fee,
