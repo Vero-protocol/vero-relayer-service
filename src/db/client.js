@@ -1,10 +1,10 @@
-const { Pool } = require('pg');
-const { logger } = require('../logger');
+const { Pool } = require("pg");
+const { logger } = require("../logger");
 
 /**
  * PostgreSQL connection pool singleton for persistent database connections.
  * Optimized for concurrent request handling with configurable pool size.
- * 
+ *
  * Environment variables:
  * - DATABASE_URL: Full connection string (takes precedence)
  * - PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE: Individual connection params
@@ -16,14 +16,17 @@ const { logger } = require('../logger');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   host: process.env.PGHOST,
-  port: parseInt(process.env.PGPORT || '5432', 10),
+  port: parseInt(process.env.PGPORT || "5432", 10),
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
-  min: parseInt(process.env.DB_POOL_MIN || '2', 10),
-  max: parseInt(process.env.DB_POOL_MAX || '20', 10),
-  idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000', 10),
-  connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT || '5000', 10),
+  min: parseInt(process.env.DB_POOL_MIN || "2", 10),
+  max: parseInt(process.env.DB_POOL_MAX || "20", 10),
+  idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || "30000", 10),
+  connectionTimeoutMillis: parseInt(
+    process.env.DB_POOL_CONNECTION_TIMEOUT || "5000",
+    10,
+  ),
   // Enable keep-alive to detect broken connections
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
@@ -38,45 +41,57 @@ let poolMetrics = {
 };
 
 // Update metrics on connection lifecycle events
-pool.on('connect', (client) => {
+pool.on("connect", (client) => {
   poolMetrics.totalConnections = pool.totalCount;
   poolMetrics.idleConnections = pool.idleCount;
   poolMetrics.waitingClients = pool.waitingCount;
-  logger.debug({ 
-    totalConnections: poolMetrics.totalConnections,
-    idleConnections: poolMetrics.idleConnections,
-    waitingClients: poolMetrics.waitingClients
-  }, '[db] Client connected to pool');
+  logger.debug(
+    {
+      totalConnections: poolMetrics.totalConnections,
+      idleConnections: poolMetrics.idleConnections,
+      waitingClients: poolMetrics.waitingClients,
+    },
+    "[db] Client connected to pool",
+  );
 });
 
-pool.on('acquire', (client) => {
+pool.on("acquire", (client) => {
   poolMetrics.totalConnections = pool.totalCount;
   poolMetrics.idleConnections = pool.idleCount;
   poolMetrics.waitingClients = pool.waitingCount;
-  logger.debug({
-    totalConnections: poolMetrics.totalConnections,
-    idleConnections: poolMetrics.idleConnections,
-    waitingClients: poolMetrics.waitingClients
-  }, '[db] Client acquired from pool');
+  logger.debug(
+    {
+      totalConnections: poolMetrics.totalConnections,
+      idleConnections: poolMetrics.idleConnections,
+      waitingClients: poolMetrics.waitingClients,
+    },
+    "[db] Client acquired from pool",
+  );
 });
 
-pool.on('remove', (client) => {
+pool.on("remove", (client) => {
   poolMetrics.totalConnections = pool.totalCount;
   poolMetrics.idleConnections = pool.idleCount;
-  logger.debug({
-    totalConnections: poolMetrics.totalConnections,
-    idleConnections: poolMetrics.idleConnections
-  }, '[db] Client removed from pool');
+  logger.debug(
+    {
+      totalConnections: poolMetrics.totalConnections,
+      idleConnections: poolMetrics.idleConnections,
+    },
+    "[db] Client removed from pool",
+  );
 });
 
 // Handle errors on idle clients (connection failures, network issues)
-pool.on('error', (err, client) => {
+pool.on("error", (err, client) => {
   poolMetrics.errors++;
-  logger.error({ 
-    error: err.message, 
-    code: err.code,
-    totalErrors: poolMetrics.errors 
-  }, '[db] Unexpected error on idle client');
+  logger.error(
+    {
+      error: err.message,
+      code: err.code,
+      totalErrors: poolMetrics.errors,
+    },
+    "[db] Unexpected error on idle client",
+  );
 });
 
 /**
@@ -88,16 +103,21 @@ async function healthCheck() {
     const startTime = Date.now();
     const client = await pool.connect();
     try {
-      const result = await client.query('SELECT 1 as health, NOW() as timestamp');
+      const result = await client.query(
+        "SELECT 1 as health, NOW() as timestamp",
+      );
       const latency = Date.now() - startTime;
-      
-      logger.info({ 
-        totalConnections: pool.totalCount,
-        idleConnections: pool.idleCount,
-        waitingClients: pool.waitingCount,
-        latencyMs: latency
-      }, '[db] Pool health check passed');
-      
+
+      logger.info(
+        {
+          totalConnections: pool.totalCount,
+          idleConnections: pool.idleCount,
+          waitingClients: pool.waitingCount,
+          latencyMs: latency,
+        },
+        "[db] Pool health check passed",
+      );
+
       return {
         healthy: true,
         latencyMs: latency,
@@ -112,7 +132,10 @@ async function healthCheck() {
       client.release();
     }
   } catch (error) {
-    logger.error({ error: error.message, code: error.code }, '[db] Pool health check failed');
+    logger.error(
+      { error: error.message, code: error.code },
+      "[db] Pool health check failed",
+    );
     return {
       healthy: false,
       error: error.message,
@@ -145,26 +168,18 @@ function getPoolMetrics() {
  * Should be called on application shutdown.
  */
 async function shutdown() {
-  logger.info('[db] Shutting down connection pool...');
+  logger.info("[db] Shutting down connection pool...");
   try {
     await pool.end();
-    logger.info('[db] Connection pool closed successfully');
+    logger.info("[db] Connection pool closed successfully");
   } catch (error) {
-    logger.error({ error: error.message }, '[db] Error closing connection pool');
+    logger.error(
+      { error: error.message },
+      "[db] Error closing connection pool",
+    );
     throw error;
   }
 }
-
-// Graceful shutdown on SIGTERM/SIGINT
-process.on('SIGTERM', async () => {
-  await shutdown();
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  await shutdown();
-  process.exit(0);
-});
 
 module.exports = {
   pool,
