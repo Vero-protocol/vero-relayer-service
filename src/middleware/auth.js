@@ -69,13 +69,12 @@ function getSignatureDecision(req) {
 }
 
 /**
- * Populate the private authentication decision before rate-limit tier
- * selection. Invalid requests continue so they can consume the public quota;
- * verifySignature remains responsible for the eventual HTTP rejection.
+ * Populate the private authentication decision for rate-limit tier selection.
+ * Enforcement remains the responsibility of verifySignature, so invalid
+ * requests can consume the public quota before their eventual HTTP rejection.
  */
-function classifySignature(req, _res, next) {
+function classifySignature(req) {
   getSignatureDecision(req);
-  return next();
 }
 
 function isSignatureVerified(req) {

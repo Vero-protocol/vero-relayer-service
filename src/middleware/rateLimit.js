@@ -42,7 +42,7 @@ try {
   logger = console;
 }
 const { sendError } = require('../utils/http-errors');
-const { isSignatureVerified } = require('./auth');
+const { classifySignature, isSignatureVerified } = require('./auth');
 let IORedis;
 let getRedisConnectionOptions;
 try {
@@ -182,7 +182,13 @@ const publicRateLimiter = rateLimit({
   standardHeaders: true,   // Emit RateLimit-* headers (RFC 6585)
   legacyHeaders: false,
   keyGenerator: clientIp,
-  skip: (req) => isAuthenticated(req), // authenticated callers use auth limiter
+  skip(req) {
+    // Tier selection and enforcement share this private, cached decision.
+    // Classifying inside the first limiter also makes it impossible to mount
+    // the dual limiter without establishing the authentication state first.
+    classifySignature(req);
+    return isAuthenticated(req); // verified callers use auth limiter
+  },
   store: createRedisStore(PUBLIC_WINDOW_MS) || undefined,
   handler(req, res) {
     try {
@@ -234,10 +240,10 @@ const authenticatedRateLimiter = rateLimit({
  * Mount this before the route handler on any public-facing ingest endpoint.
  */
 function ingestRateLimiter(req, res, next) {
-  if (isAuthenticated(req)) {
+  return publicRateLimiter(req, res, (err) => {
+    if (err) return next(err);
     return authenticatedRateLimiter(req, res, next);
-  }
-  return publicRateLimiter(req, res, next);
+  });
 }
 
 /**

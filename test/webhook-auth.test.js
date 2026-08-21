@@ -90,11 +90,8 @@ test('classifier verifies GitHub official HMAC-SHA256 test vector', () => {
       },
       rawBody: Buffer.from('Hello, World!', 'utf8')
     };
-    let nextCalled = false;
+    classifySignature(req);
 
-    classifySignature(req, response(), () => { nextCalled = true; });
-
-    assert.equal(nextCalled, true);
     assert.equal(isSignatureVerified(req), true);
   });
 });
@@ -117,7 +114,7 @@ test('signature enforcement reuses the classifier decision', () => {
     const res = response();
     let nextCalled = false;
 
-    classifySignature(req, res, () => {});
+    classifySignature(req);
     verifySignature(req, res, () => { nextCalled = true; });
 
     assert.equal(nextCalled, true);
@@ -135,7 +132,7 @@ test('classifier treats malformed and wrong-length signatures as unverified', ()
         rawBody: Buffer.from('{}', 'utf8')
       };
 
-      assert.doesNotThrow(() => classifySignature(req, response(), () => {}));
+      assert.doesNotThrow(() => classifySignature(req));
       assert.equal(isSignatureVerified(req), false);
     }
   });
