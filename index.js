@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const express = require('express');
-const { verifySignature } = require('./src/middleware/auth');
+const { classifySignature, verifySignature } = require('./src/middleware/auth');
 const { verifyJwtBearer } = require('./src/middleware/jwt-auth');
 const {
   buildGitHubPullRequestEventPayload,
@@ -73,8 +73,9 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // Classify the signature once so the limiter can select a verified tier;
+  // enforcement remains after limiting so invalid attempts consume public quota.
+  app.post('/github-webhook', classifySignature, ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });

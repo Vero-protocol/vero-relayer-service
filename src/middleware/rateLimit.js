@@ -2,8 +2,8 @@
  * Rate-limiting middleware for the public ingest endpoint.
  *
  * Distinguishes between:
- *   - Authenticated requests (bearing a valid signature or Authorization header)
- *     which receive a more generous limit.
+ *   - Authenticated requests whose GitHub signature has already been
+ *     cryptographically verified, which receive a more generous limit.
  *   - Public / unauthenticated requests which receive a tighter limit.
  *
  * The real client IP is extracted from X-Forwarded-For when Express trust
@@ -42,6 +42,7 @@ try {
   logger = console;
 }
 const { sendError } = require('../utils/http-errors');
+const { isSignatureVerified } = require('./auth');
 let IORedis;
 let getRedisConnectionOptions;
 try {
@@ -163,18 +164,12 @@ function clientIp(req) {
 // ---------------------------------------------------------------------------
 
 /**
- * A request is considered "authenticated" when it presents either:
- *   - An Authorization header (JWT Bearer token), or
- *   - An X-Hub-Signature-256 header (GitHub HMAC signature), or
- *   - An X-Vero-Signature header (Vero HMAC signature).
+ * A request is considered authenticated only after its GitHub HMAC signature
+ * has been cryptographically verified by the webhook authentication middleware.
+ * Header presence alone must never grant the higher rate-limit tier.
  */
 function isAuthenticated(req) {
-  const headers = req.headers || {};
-  return !!(
-    headers['authorization'] ||
-    headers['x-hub-signature-256'] ||
-    headers['x-vero-signature']
-  );
+  return isSignatureVerified(req);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +229,7 @@ const authenticatedRateLimiter = rateLimit({
 
 /**
  * Express middleware that applies either the public or authenticated rate
- * limit based on whether the incoming request carries auth headers.
+ * limit based on a previously established authentication decision.
  *
  * Mount this before the route handler on any public-facing ingest endpoint.
  */
