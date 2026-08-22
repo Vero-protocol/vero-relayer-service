@@ -1,17 +1,20 @@
 'use strict';
 
 const { getRedisConnectionOptions } = require('../queue/redis');
+const { resolveIdempotencyKeyFromRequest } = require('../queue/event-queue');
 const { logger } = require('../logger');
 const { sendError } = require('../utils/http-errors');
 
 // ---------------------------------------------------------------------------
 // Idempotency-Key middleware
 //
-// Enforces a unique Idempotency-Key header on every POST request. Keys are
+// Enforces a unique idempotency key on every POST request. Keys are
 // persisted in Redis with a configurable TTL so that duplicate submissions
 // within the window are rejected with 409.
 //
-// Header: Idempotency-Key: <opaque-string>
+// Accepted headers (same fallback as buildMetadataFromRequest):
+//   Idempotency-Key: <opaque-string>
+//   X-GitHub-Delivery: <uuid>   (used when Idempotency-Key is absent)
 // ---------------------------------------------------------------------------
 
 const KEY_PREFIX = 'idempotency:';
@@ -40,24 +43,29 @@ function getRedisClient() {
 }
 
 /**
- * Express middleware that enforces Idempotency-Key headers on POST requests.
+ * Express middleware that enforces idempotency keys on POST requests.
  *
- * - Missing header           → 400
- * - Key already seen         → 409
- * - Redis unavailable        → 503  (fail-closed: reject rather than allow duplicates)
+ * - Missing Idempotency-Key and X-GitHub-Delivery → 400
+ * - Key already seen                              → 409
+ * - Redis unavailable                             → 503  (fail-closed: reject rather than allow duplicates)
  *
  * @param {import('express').Request}  req
  * @param {import('express').Response} res
  * @param {import('express').NextFunction} next
  */
 async function enforceIdempotency(req, res, next) {
-  const key = req.headers['idempotency-key'];
+  const key = resolveIdempotencyKeyFromRequest(req);
 
-  if (!key || String(key).trim() === '') {
-    return sendError(res, 400, 'MISSING_IDEMPOTENCY_KEY', 'Missing Idempotency-Key header');
+  if (!key) {
+    return sendError(
+      res,
+      400,
+      'MISSING_IDEMPOTENCY_KEY',
+      'Missing Idempotency-Key or X-GitHub-Delivery header'
+    );
   }
 
-  const redisKey = KEY_PREFIX + String(key).trim();
+  const redisKey = KEY_PREFIX + key;
 
   try {
     const redis = getRedisClient();

@@ -51,6 +51,27 @@ test('buildGitHubPullRequestEventPayload keeps the queue payload small and safe'
   assert.equal(payload.payload.sender, undefined);
 });
 
+test('buildMetadataFromRequest falls back to X-GitHub-Delivery for idempotency', () => {
+  const { buildMetadataFromRequest, resolveIdempotencyKeyFromRequest } = require('../src/queue/event-queue');
+  const req = {
+    get(name) {
+      const headers = {
+        'x-github-delivery': 'delivery-from-github',
+        'x-request-id': 'req-1'
+      };
+      return headers[String(name).toLowerCase()] || undefined;
+    }
+  };
+
+  assert.equal(resolveIdempotencyKeyFromRequest(req), 'delivery-from-github');
+  assert.deepEqual(buildMetadataFromRequest(req), {
+    deliveryId: 'delivery-from-github',
+    idempotencyKey: 'delivery-from-github',
+    requestId: 'req-1',
+    source: 'github'
+  });
+});
+
 test('stable idempotency keys produce stable BullMQ job IDs', () => {
   const first = buildGitHubPullRequestEventPayload(githubEvent(42), { deliveryId: 'same-delivery' });
   const second = buildGitHubPullRequestEventPayload(githubEvent(42), { deliveryId: 'same-delivery' });
