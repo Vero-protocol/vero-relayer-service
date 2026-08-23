@@ -131,10 +131,24 @@ function buildGitHubPullRequestEventPayload(rawEvent, metadata = {}) {
   };
 }
 
+/**
+ * Resolve an idempotency key from request headers.
+ * Prefer Idempotency-Key; fall back to X-GitHub-Delivery (GitHub never sends the former).
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
+function resolveIdempotencyKeyFromRequest(req) {
+  return firstNonEmptyString([
+    getHeader(req, 'idempotency-key'),
+    getHeader(req, 'x-github-delivery')
+  ]);
+}
+
 function buildMetadataFromRequest(req) {
   return {
     deliveryId: getHeader(req, 'x-github-delivery'),
-    idempotencyKey: getHeader(req, 'idempotency-key') || getHeader(req, 'x-github-delivery'),
+    idempotencyKey: resolveIdempotencyKeyFromRequest(req),
     requestId: getHeader(req, 'x-request-id'),
     source: 'github'
   };
@@ -177,5 +191,6 @@ module.exports = {
   createEventQueue,
   deriveIdempotencyKey,
   enqueueEvent,
-  getEventQueue
+  getEventQueue,
+  resolveIdempotencyKeyFromRequest
 };
