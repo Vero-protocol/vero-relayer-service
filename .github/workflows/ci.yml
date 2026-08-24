@@ -86,6 +86,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
       - name: Run database migrations
         run: npm run db:migrate
 

@@ -1,10 +1,16 @@
 const crypto = require('crypto');
+const { logger } = require('../logger');
 
 function verifySignature(req, res, next) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
   if (!secret) {
-    if (process.env.NODE_ENV !== 'production') return next();
+    if (process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true') {
+      (req.log || logger).warn(
+        '[webhook-auth] SECURITY WARNING: accepting an unsigned GitHub webhook because ALLOW_UNSIGNED_WEBHOOKS=true'
+      );
+      return next();
+    }
     return res.status(500).json({ error: 'Webhook secret is not configured' });
   }
 

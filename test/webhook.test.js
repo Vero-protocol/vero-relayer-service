@@ -91,7 +91,9 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
       enqueuedEvents.push(eventPayload);
       return { id: 'job-42' };
     },
-    storeRawEvent: async () => 'delivery-route'
+    storeRawEvent: async () => 'delivery-route',
+    // Bypass Redis-backed idempotency; key acceptance is covered by dedicated tests.
+    idempotencyMiddleware: (_req, _res, next) => next()
   });
   const server = await listen(app);
   t.after(() => close(server));
@@ -111,8 +113,7 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
       'Content-Type': 'application/json',
       'X-GitHub-Delivery': 'delivery-route',
       'X-Request-ID': 'request-route',
-      'x-hub-signature-256': sign(body),
-      'Idempotency-Key': 'delivery-route'
+      'x-hub-signature-256': sign(body)
     },
     body
   });
@@ -125,6 +126,74 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
   assert.equal(enqueuedEvents[0].payload.pull_request.number, 42);
   assert.equal(enqueuedEvents[0].idempotencyKey, 'delivery-route');
   assert.equal(enqueuedEvents[0].requestId, 'request-route');
+});
+
+test('github webhook accepts real GitHub deliveries without Idempotency-Key', async t => {
+  process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
+  process.env.REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
+  process.env.REDIS_PORT = process.env.REDIS_PORT || '6379';
+  t.after(() => delete process.env.GITHUB_WEBHOOK_SECRET);
+
+  const fakeRedis = {
+    set: async () => 'OK',
+    on() {},
+    quit: async () => {},
+    disconnect() {}
+  };
+  require.cache[require.resolve('ioredis')] = {
+    id: require.resolve('ioredis'),
+    filename: require.resolve('ioredis'),
+    loaded: true,
+    exports: function FakeRedis() { return fakeRedis; }
+  };
+  delete require.cache[require.resolve('../src/middleware/idempotency')];
+  const { enforceIdempotency, closeRedisClient } = require('../src/middleware/idempotency');
+  t.after(async () => {
+    await closeRedisClient();
+    delete require.cache[require.resolve('../src/middleware/idempotency')];
+  });
+
+  const enqueuedEvents = [];
+  const app = createApp({
+    enqueueEventJob: async eventPayload => {
+      enqueuedEvents.push(eventPayload);
+      return { id: 'job-github-delivery' };
+    },
+    storeRawEvent: async () => '72d3162e-cc78-11e3-81ab-4c9367dc0958',
+    idempotencyMiddleware: enforceIdempotency
+  });
+  const server = await listen(app);
+  t.after(() => close(server));
+
+  const body = JSON.stringify({
+    action: 'closed',
+    pull_request: {
+      number: 7,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    }
+  });
+
+  // Headers shaped like a real GitHub webhook delivery — no Idempotency-Key.
+  const response = await fetch(url(server, '/github-webhook'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'GitHub-Hookshot/044aadd',
+      'X-GitHub-Delivery': '72d3162e-cc78-11e3-81ab-4c9367dc0958',
+      'X-GitHub-Event': 'pull_request',
+      'X-GitHub-Hook-ID': '292430182',
+      'x-hub-signature-256': sign(body)
+    },
+    body
+  });
+
+  const resBody = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(resBody, { ok: true, pr: 7, queued: true, jobId: 'job-github-delivery' });
+  assert.equal(enqueuedEvents.length, 1);
+  assert.equal(enqueuedEvents[0].idempotencyKey, '72d3162e-cc78-11e3-81ab-4c9367dc0958');
 });
 
 test('github webhook keeps existing skipped response for non-qualifying events', async t => {

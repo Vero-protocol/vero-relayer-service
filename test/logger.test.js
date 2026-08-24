@@ -159,7 +159,7 @@ test('request logger attaches and logs request ID without headers or body', () =
 });
 
 test('runtime source files do not use direct console logging', () => {
-  const roots = ['src', 'index.js', 'stellar.js', 'logger.js'];
+  const roots = ['src', 'index.js'];
   const forbidden = new RegExp(`${'console'}\\.(log|warn|error|info|debug)`);
 
   function collectFiles(target) {

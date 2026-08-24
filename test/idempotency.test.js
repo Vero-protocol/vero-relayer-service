@@ -62,7 +62,7 @@ function reset() {
 // Unit tests – enforceIdempotency middleware
 // ---------------------------------------------------------------------------
 
-test('idempotency – rejects POST with missing Idempotency-Key header', async () => {
+test('idempotency – rejects POST with missing Idempotency-Key and X-GitHub-Delivery headers', async () => {
   const app = buildApp();
 
   const res = await supertest(app)
@@ -83,6 +83,37 @@ test('idempotency – rejects POST with blank Idempotency-Key header', async () 
 
   assert.equal(res.status, 400);
   assert.equal(res.body.code, 'MISSING_IDEMPOTENCY_KEY');
+});
+
+test('idempotency – accepts X-GitHub-Delivery when Idempotency-Key is absent', async () => {
+  nextSetResult = 'OK';
+  redisCalls.length = 0;
+  const app = buildApp();
+
+  const res = await supertest(app)
+    .post('/tx')
+    .set('X-GitHub-Delivery', '72d3162e-cc78-11e3-81ab-4c9367dc0958')
+    .send({ amount: 100 });
+
+  assert.equal(res.status, 202);
+  assert.deepEqual(res.body, { ok: true });
+  assert.equal(redisCalls.length, 1);
+  assert.equal(redisCalls[0][0], 'idempotency:72d3162e-cc78-11e3-81ab-4c9367dc0958');
+});
+
+test('idempotency – prefers Idempotency-Key over X-GitHub-Delivery', async () => {
+  nextSetResult = 'OK';
+  redisCalls.length = 0;
+  const app = buildApp();
+
+  const res = await supertest(app)
+    .post('/tx')
+    .set('Idempotency-Key', 'client-key')
+    .set('X-GitHub-Delivery', 'github-delivery-id')
+    .send({ amount: 100 });
+
+  assert.equal(res.status, 202);
+  assert.equal(redisCalls[0][0], 'idempotency:client-key');
 });
 
 test('idempotency – allows a new unique key through (Redis SET NX returns OK)', async () => {
