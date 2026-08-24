@@ -30,7 +30,7 @@ curl http://localhost:3000/health | jq '.database'
 
 ### Singleton Pattern
 
-The database pool is implemented as a singleton in `src/db/client.js` and `src/db/client.ts`, ensuring all services share the same connection pool instance.
+The database pool is implemented as a singleton in `src/db/client.js`, ensuring all services share the same connection pool instance.
 
 ```javascript
 const { pool } = require('./src/db/client');
