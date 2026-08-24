@@ -8,6 +8,22 @@ const path = require('path');
 let pollerInterval = null;
 let redisClient = null;
 let configWorker = null;
+let configWorkerRestartTimer = null;
+let configWorkerRestartAttempts = 0;
+let configWorkerRestartExhausted = false;
+let configPollerStarted = false;
+let configPollerStopping = false;
+let configPollerStartedAt = null;
+let configPollerMode = 'stopped';
+let configSyncIntervalMs = null;
+let lastConfigSyncAt = null;
+
+const DEFAULT_CONFIG_SYNC_INTERVAL_MS = 5000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const CONFIG_SYNC_STALE_INTERVALS = 3;
+const CONFIG_WORKER_MAX_RESTARTS = 3;
+const CONFIG_WORKER_RESTART_BASE_DELAY_MS = 1000;
+const CONFIG_WORKER_RESTART_MAX_DELAY_MS = 30_000;
 
 // Dynamic config cache
 const dynamicConfig = {};
@@ -15,6 +31,65 @@ const dynamicConfig = {};
 // Config signature verification
 const CONFIG_SIGNATURE_KEY = 'vero:config:signature';
 const CONFIG_PAYLOAD_KEY = 'vero:config:payload';
+
+function getConfigSyncIntervalMs() {
+  const configured = Number(process.env.CONFIG_SYNC_INTERVAL_MS);
+  return Number.isInteger(configured)
+    && configured >= 1
+    && configured <= MAX_TIMER_DELAY_MS
+    ? configured
+    : DEFAULT_CONFIG_SYNC_INTERVAL_MS;
+}
+
+function recordConfigSyncSuccess(worker = null) {
+  lastConfigSyncAt = Date.now();
+
+  // A late completion from an exited worker still represents a successful
+  // sync, but it must not replenish the restart budget of its replacement.
+  if (!worker || configWorker === worker) {
+    configWorkerRestartAttempts = 0;
+    configWorkerRestartExhausted = false;
+  }
+}
+
+function getConfigSyncHealth(now = Date.now()) {
+  const intervalMs = configSyncIntervalMs || getConfigSyncIntervalMs();
+  const staleAfterMs = intervalMs * CONFIG_SYNC_STALE_INTERVALS;
+  const referenceTime = lastConfigSyncAt ?? configPollerStartedAt;
+  const stale = Boolean(
+    configPollerStarted
+    && referenceTime !== null
+    && now - referenceTime > staleAfterMs
+  );
+
+  let status = 'stopped';
+  if (configPollerStarted) {
+    if (configWorkerRestartExhausted) {
+      status = 'exhausted';
+    } else if (stale) {
+      status = 'stale';
+    } else if (configWorkerRestartTimer) {
+      status = 'restarting';
+    } else if (lastConfigSyncAt === null) {
+      status = 'starting';
+    } else {
+      status = 'running';
+    }
+  }
+
+  return {
+    healthy: configPollerStarted && !configWorkerRestartExhausted && !stale,
+    status,
+    mode: configPollerMode,
+    stale,
+    staleAfterMs,
+    lastConfigSyncAt: lastConfigSyncAt === null
+      ? null
+      : new Date(lastConfigSyncAt).toISOString(),
+    restartAttempts: configWorkerRestartAttempts,
+    maxRestartAttempts: CONFIG_WORKER_MAX_RESTARTS,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Allowlist — the ONLY keys that may be changed via dynamic config sync.
@@ -91,7 +166,8 @@ async function pollConfig() {
       if (verifyConfigSignature(payload, signature)) {
         const configs = JSON.parse(payload);
         await applyConfig(configs, 'signed');
-        return;
+        recordConfigSyncSuccess();
+        return true;
       } else {
         logger.warn('[config-poller] Signed config verification failed, skipping signed config');
       }
@@ -100,15 +176,19 @@ async function pollConfig() {
     // Unsigned fallback — only active when explicitly opted-in by the operator.
     // Keys are still filtered through the allowlist even in this path.
     if (process.env.CONFIG_SYNC_ALLOW_UNSIGNED !== 'true') {
-      return;
+      recordConfigSyncSuccess();
+      return true;
     }
 
     const configs = await redisClient.hgetall('vero:config');
     if (configs && Object.keys(configs).length > 0) {
       await applyConfig(configs, 'unsigned');
     }
+    recordConfigSyncSuccess();
+    return true;
   } catch (error) {
     logger.warn({ error: error.message }, '[config-poller] Failed to poll config from Redis, using existing env');
+    return false;
   }
 }
 
@@ -166,10 +246,19 @@ async function applyConfig(configs, source) {
 }
 
 function startConfigPoller() {
-  if (pollerInterval) return;
+  if (configPollerStarted) return;
 
-  const intervalMs = Number(process.env.CONFIG_SYNC_INTERVAL_MS) || 5000;
+  const intervalMs = getConfigSyncIntervalMs();
   const useAsyncWorker = process.env.CONFIG_ASYNC_WORKER === 'true';
+
+  configPollerStarted = true;
+  configPollerStopping = false;
+  configPollerStartedAt = Date.now();
+  configPollerMode = useAsyncWorker ? 'worker' : 'direct';
+  configSyncIntervalMs = intervalMs;
+  lastConfigSyncAt = null;
+  configWorkerRestartAttempts = 0;
+  configWorkerRestartExhausted = false;
 
   if (useAsyncWorker) {
     // Use async worker for performance optimization
@@ -177,6 +266,9 @@ function startConfigPoller() {
   } else {
     // Use direct polling (default for backward compatibility)
     pollConfig().then(() => {
+      if (!configPollerStarted || configPollerStopping || pollerInterval) {
+        return;
+      }
       pollerInterval = setInterval(pollConfig, intervalMs);
       if (pollerInterval && typeof pollerInterval.unref === 'function') {
         pollerInterval.unref();
@@ -185,45 +277,150 @@ function startConfigPoller() {
   }
 }
 
+function calculateConfigWorkerRestartDelay(attempt) {
+  const exponentialCap = Math.min(
+    CONFIG_WORKER_RESTART_MAX_DELAY_MS,
+    CONFIG_WORKER_RESTART_BASE_DELAY_MS * (2 ** (attempt - 1))
+  );
+
+  // Equal jitter keeps a meaningful delay while avoiding synchronized restart
+  // waves when several service instances lose their workers together.
+  const half = exponentialCap / 2;
+  return Math.max(1, Math.floor(half + Math.random() * half));
+}
+
+function scheduleConfigWorkerRestart(details = {}) {
+  if (
+    configPollerStopping
+    || !configPollerStarted
+    || configWorker
+    || configWorkerRestartTimer
+    || configWorkerRestartExhausted
+  ) {
+    return;
+  }
+
+  if (configWorkerRestartAttempts >= CONFIG_WORKER_MAX_RESTARTS) {
+    configWorkerRestartExhausted = true;
+    logger.error(
+      {
+        restartAttempts: configWorkerRestartAttempts,
+        maxRestartAttempts: CONFIG_WORKER_MAX_RESTARTS,
+        lastConfigSyncAt: lastConfigSyncAt === null
+          ? null
+          : new Date(lastConfigSyncAt).toISOString(),
+        ...details,
+      },
+      '[config-poller] Config worker restart budget exhausted'
+    );
+    return;
+  }
+
+  configWorkerRestartAttempts += 1;
+  const attempt = configWorkerRestartAttempts;
+  const delayMs = calculateConfigWorkerRestartDelay(attempt);
+
+  logger.warn(
+    {
+      attempt,
+      maxRestartAttempts: CONFIG_WORKER_MAX_RESTARTS,
+      delayMs,
+      ...details,
+    },
+    '[config-poller] Scheduling config worker restart'
+  );
+
+  configWorkerRestartTimer = setTimeout(() => {
+    configWorkerRestartTimer = null;
+    startConfigWorker();
+  }, delayMs);
+
+  if (typeof configWorkerRestartTimer.unref === 'function') {
+    configWorkerRestartTimer.unref();
+  }
+}
+
 function startConfigWorker() {
-  if (configWorker) return;
+  if (
+    configWorker
+    || configWorkerRestartTimer
+    || configWorkerRestartExhausted
+    || configPollerStopping
+    || !configPollerStarted
+  ) {
+    return;
+  }
 
   const workerPath = path.join(__dirname, 'config-worker.js');
-  configWorker = new Worker(workerPath, {
-    workerData: {
-      intervalMs: Number(process.env.CONFIG_SYNC_INTERVAL_MS) || 5000,
-      redisOpts: getRedisConnectionOptions(),
-      // Pass signing material so the worker can verify independently.
-      // These are read from process.env here (in the main thread) and
-      // embedded in workerData — they are never readable from Redis.
-      jwtSigningSecret: process.env.JWT_SIGNING_SECRET,
-      jwtIssuer: process.env.JWT_ISSUER || 'vero-relayer-service',
-      allowUnsigned: process.env.CONFIG_SYNC_ALLOW_UNSIGNED === 'true',
-    }
-  });
+  let worker;
 
-  configWorker.on('message', (message) => {
+  try {
+    worker = new Worker(workerPath, {
+      workerData: {
+        intervalMs: configSyncIntervalMs || getConfigSyncIntervalMs(),
+        redisOpts: getRedisConnectionOptions(),
+        // Pass signing material so the worker can verify independently.
+        // These are read from process.env here (in the main thread) and
+        // embedded in workerData — they are never readable from Redis.
+        jwtSigningSecret: process.env.JWT_SIGNING_SECRET,
+        jwtIssuer: process.env.JWT_ISSUER || 'vero-relayer-service',
+        allowUnsigned: process.env.CONFIG_SYNC_ALLOW_UNSIGNED === 'true',
+      }
+    });
+    configWorker = worker;
+  } catch (error) {
+    logger.error({ error: error.message }, '[config-poller] Failed to start config worker');
+    scheduleConfigWorkerRestart({ reason: 'start_error' });
+    return;
+  }
+
+  worker.on('message', (message) => {
     if (message.type === 'configUpdate') {
       // Defense in depth: never trust message.source from the worker at face
       // value.  Re-verify the signature here in the main thread before
       // applying any config that claims to be 'signed'.
-      handleWorkerConfigUpdate(message).catch(err => {
-        logger.error({ error: err.message }, '[config-poller] Failed to apply worker config');
-      });
+      handleWorkerConfigUpdate(message)
+        .then(applied => {
+          if (applied) {
+            recordConfigSyncSuccess(worker);
+          }
+        })
+        .catch(err => {
+          logger.error({ error: err.message }, '[config-poller] Failed to apply worker config');
+        });
+    } else if (message.type === 'syncSuccess') {
+      if (configWorker === worker) {
+        recordConfigSyncSuccess(worker);
+      }
     } else if (message.type === 'error') {
       logger.warn({ error: message.error }, '[config-poller] Worker reported error');
     }
   });
 
-  configWorker.on('error', (err) => {
+  worker.on('error', (err) => {
     logger.error({ error: err.message }, '[config-poller] Config worker error');
-  });
-
-  configWorker.on('exit', (code) => {
-    if (code !== 0) {
-      logger.warn({ code }, '[config-poller] Config worker exited unexpectedly');
+    if (configWorker === worker) {
       configWorker = null;
     }
+  });
+
+  let exitHandled = false;
+  worker.on('exit', (code) => {
+    if (exitHandled) {
+      return;
+    }
+    exitHandled = true;
+
+    if (configWorker === worker) {
+      configWorker = null;
+    }
+
+    if (configPollerStopping || !configPollerStarted) {
+      return;
+    }
+
+    logger.warn({ code }, '[config-poller] Config worker exited unexpectedly');
+    scheduleConfigWorkerRestart({ reason: 'exit', code });
   });
 
   logger.info('[config-poller] Started async config worker');
@@ -251,42 +448,66 @@ async function handleWorkerConfigUpdate(message) {
       logger.error(
         '[config-poller] Worker sent source:signed without rawSignature/rawPayload — rejecting'
       );
-      return;
+      return false;
     }
 
     if (!verifyConfigSignature(rawPayload, rawSignature)) {
       logger.error(
         '[config-poller] Worker config re-verification failed in main thread — rejecting'
       );
-      return;
+      return false;
     }
 
     await applyConfig(configs, 'signed');
+    return true;
   } else if (source === 'unsigned') {
     // Unsigned path — only allowed when the operator has opted in.
     if (process.env.CONFIG_SYNC_ALLOW_UNSIGNED !== 'true') {
       logger.warn('[config-poller] Worker sent unsigned config but CONFIG_SYNC_ALLOW_UNSIGNED is not set — rejecting');
-      return;
+      return false;
     }
     await applyConfig(configs, 'unsigned');
+    return true;
   } else {
     logger.warn({ source }, '[config-poller] Worker sent unknown config source — rejecting');
+    return false;
   }
 }
 
 function stopConfigPoller() {
+  configPollerStopping = true;
+  configPollerStarted = false;
+
+  if (configWorkerRestartTimer) {
+    clearTimeout(configWorkerRestartTimer);
+    configWorkerRestartTimer = null;
+  }
   if (pollerInterval) {
     clearInterval(pollerInterval);
     pollerInterval = null;
   }
   if (configWorker) {
-    configWorker.terminate();
+    const worker = configWorker;
     configWorker = null;
+    try {
+      Promise.resolve(worker.terminate()).catch(err => {
+        logger.warn({ error: err.message }, '[config-poller] Failed to terminate config worker cleanly');
+      });
+    } catch (err) {
+      logger.warn({ error: err.message }, '[config-poller] Failed to terminate config worker cleanly');
+    }
   }
   if (redisClient) {
     redisClient.disconnect();
     redisClient = null;
   }
+
+  configPollerMode = 'stopped';
+  configSyncIntervalMs = null;
+  configPollerStartedAt = null;
+  lastConfigSyncAt = null;
+  configWorkerRestartAttempts = 0;
+  configWorkerRestartExhausted = false;
 }
 
 module.exports = {
@@ -296,6 +517,7 @@ module.exports = {
   applyConfig,
   verifyConfigSignature,
   handleWorkerConfigUpdate,
+  getConfigSyncHealth,
   dynamicConfig,
   CONFIG_ALLOWLIST,
 };
