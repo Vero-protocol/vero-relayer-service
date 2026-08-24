@@ -91,3 +91,48 @@ test('recordRetry schedules retries using the RETRY_BACKOFFS_MS override', async
   assert.ok(scheduledAt >= before + 50, 'nextRetryAt should include the configured delay');
   assert.ok(scheduledAt <= after + 1000, 'nextRetryAt should be close to the configured delay');
 });
+
+// resetStuckRetries is the crash-recovery path: the retry worker calls it on
+// startup to resume retries interrupted by a restart. It used to move rows to
+// status 'pending', but findDueRetries selects only status = 'retrying' and
+// nothing transitions 'pending' back — so the function meant to resume retries
+// silently killed them. A worker killed with N merged PRs mid-retry would
+// strand all N, and those PRs would never reach the chain, with nothing logged.
+test('resetStuckRetries leaves rows in a status findDueRetries actually reads', async () => {
+  const originalQuery = pool.query;
+  const captured = [];
+
+  pool.query = async (queryText, params) => {
+    captured.push({ queryText, params });
+    return { rows: [], rowCount: 0 };
+  };
+
+  try {
+    const { resetStuckRetries, findDueRetries } = require('../src/services/retry-tracker');
+
+    await resetStuckRetries('event');
+    const resetSql = captured[0].queryText;
+
+    captured.length = 0;
+    await findDueRetries('event');
+    const findSql = captured[0].queryText;
+
+    // Whatever status the reset leaves behind must be one the finder selects.
+    const findStatus = /status\s*=\s*'([a-z]+)'/.exec(findSql);
+    assert.ok(findStatus, 'findDueRetries should filter on a status');
+
+    const resetWritesStatus = /SET[\s\S]*?status\s*=\s*'([a-z]+)'/.exec(resetSql);
+    if (resetWritesStatus) {
+      assert.equal(
+        resetWritesStatus[1],
+        findStatus[1],
+        `resetStuckRetries writes status '${resetWritesStatus[1]}' but findDueRetries only reads '${findStatus[1]}' — reset rows would never be picked up`
+      );
+    }
+
+    // It must also make them due again.
+    assert.match(resetSql, /next_retry_at\s*=\s*NOW\(\)/);
+  } finally {
+    pool.query = originalQuery;
+  }
+});

@@ -167,14 +167,24 @@ async function findDueRetries(jobType, limit = 50) {
 }
 
 /**
- * Reset stuck retries that were in 'retrying' state with a past next_retry_at
- * (e.g. after a crash). Moves them back to 'pending' so the worker picks them up.
+ * Reset stuck retries whose next_retry_at is well in the past (e.g. the worker
+ * was killed mid-retry). Makes them immediately due so the worker picks them up
+ * on the next poll.
+ *
+ * Status deliberately stays 'retrying'. It previously moved rows to 'pending',
+ * but `findDueRetries` selects only `status = 'retrying'` — and nothing
+ * anywhere transitions 'pending' back — so the one function meant to resume
+ * retries after a restart was silently killing them. A worker killed with N
+ * merged PRs mid-retry would flip all N into a state no query reads, and those
+ * PRs would never be registered on-chain, with no error logged.
+ *
+ * 'pending' is the pre-first-attempt state set by initRetryState; the partial
+ * index in 001_create_retry_state.sql is likewise `WHERE status = 'retrying'`.
  */
 async function resetStuckRetries(jobType) {
   const { rowCount } = await pool.query(
     `UPDATE retry_state
-     SET status = 'pending',
-         next_retry_at = NOW(),
+     SET next_retry_at = NOW(),
          updated_at = NOW()
      WHERE job_type = $1
        AND status = 'retrying'
