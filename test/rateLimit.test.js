@@ -32,19 +32,19 @@ after(async () => {
 // isAuthenticated helper
 // ---------------------------------------------------------------------------
 
-test('isAuthenticated returns true for Authorization header (JWT Bearer)', () => {
+test('isAuthenticated returns false for an unverified Authorization header', () => {
   const req = { headers: { authorization: 'Bearer token.abc.def' } };
-  assert.ok(isAuthenticated(req));
+  assert.equal(isAuthenticated(req), false);
 });
 
-test('isAuthenticated returns true for x-hub-signature-256 header (GitHub HMAC)', () => {
+test('isAuthenticated returns false for an unverified GitHub signature header', () => {
   const req = { headers: { 'x-hub-signature-256': 'sha256=abc123' } };
-  assert.ok(isAuthenticated(req));
+  assert.equal(isAuthenticated(req), false);
 });
 
-test('isAuthenticated returns true for x-vero-signature header', () => {
+test('isAuthenticated returns false for an unverified Vero signature header', () => {
   const req = { headers: { 'x-vero-signature': 'sha256=abc123' } };
-  assert.ok(isAuthenticated(req));
+  assert.equal(isAuthenticated(req), false);
 });
 
 test('isAuthenticated returns false when no auth headers are present', () => {
@@ -121,7 +121,7 @@ test('rate limit response includes RateLimit-* standard headers', async () => {
   assert.ok(hasHeader, 'expected a RateLimit-Limit header to be present');
 });
 
-test('authenticated requests succeed and receive rate limit headers', async () => {
+test('unverified Authorization headers remain in the public tier', async () => {
   const app = buildTestApp();
   const res = await supertest(app)
     .get('/test')
@@ -129,6 +129,7 @@ test('authenticated requests succeed and receive rate limit headers', async () =
     .set('Authorization', 'Bearer valid.jwt.token');
 
   assert.equal(res.status, 200);
+  assert.equal(res.headers['ratelimit-limit'], String(PUBLIC_MAX));
 });
 
 test('rate limit handler returns 429 with JSON body when limit is exceeded', async () => {
