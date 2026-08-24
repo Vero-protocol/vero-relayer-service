@@ -150,19 +150,30 @@ async function failRetry(jobType, jobId, errorMessage) {
  * next_retry_at <= NOW()). Used by the async retry worker.
  */
 async function findDueRetries(jobType, limit = 50) {
-  const { rows } = await pool.query(
-    `SELECT id, job_type, job_id, attempt_count, max_attempts,
-            last_error, next_retry_at, status, created_at, updated_at,
-            event_payload
-     FROM retry_state
-     WHERE job_type = $1
-       AND status = 'retrying'
-       AND next_retry_at <= NOW()
-     ORDER BY next_retry_at ASC
-     LIMIT $2
-     FOR UPDATE SKIP LOCKED`,
-    [jobType, limit]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, job_type, job_id, attempt_count, max_attempts,
+              last_error, next_retry_at, status, created_at, updated_at,
+              event_payload
+       FROM retry_state
+       WHERE job_type = $1
+         AND status = 'retrying'
+         AND next_retry_at <= NOW()
+       ORDER BY next_retry_at ASC
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED`,
+      [jobType, limit]
+    );
+    await client.query('COMMIT');
+    return rows;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   return rows;
 }
 
