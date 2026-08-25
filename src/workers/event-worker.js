@@ -146,20 +146,24 @@ function createEventWorker(options = {}) {
   return worker;
 }
 
-async function startEventWorker() {
+async function startEventWorker(options = {}) {
+  const runMigrationsFn = options.runMigrations || runMigrations;
+  const createEventWorkerFn = options.createEventWorker || createEventWorker;
   const queueName = getEventQueueName();
   const concurrency = getEventQueueConcurrency();
-  const worker = createEventWorker({ queueName, concurrency });
   let retryWorkerHandle = null;
   let closing = false;
 
-  // Run migrations to ensure retry_state table exists
+  // Do not create a BullMQ consumer until the retry_state schema is ready.
   try {
-    await runMigrations();
+    await runMigrationsFn();
     logger.info('[worker] Database migrations complete');
   } catch (migrationErr) {
-    logger.warn({ error: migrationErr.message }, '[worker] Database migrations skipped (non-fatal)');
+    logger.error({ error: migrationErr.message }, '[worker] Database migrations failed');
+    throw migrationErr;
   }
+
+  const worker = createEventWorkerFn({ queueName, concurrency });
 
   startConfigPoller();
 
