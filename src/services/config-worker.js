@@ -110,6 +110,23 @@ function verifyConfigSignatureInWorker(token, payload) {
     throw new Error(`Invalid issuer: expected "${expectedIssuer}", got "${claims.iss}"`);
   }
 
+  // 3b. Audience scoping — mirrors jwt.js. A token minted for service auth
+  // (/metrics, /internal/webhooks/replay) must not double as a config
+  // signature: CONFIG_ALLOWLIST includes STELLAR_HORIZON_URLS and
+  // STELLAR_RPC_URLS, and this process holds STELLAR_SECRET_KEY.
+  const CONFIG_AUDIENCE = 'vero-config-sync';
+  const aud = claims.aud;
+  const audMatches = Array.isArray(aud)
+    ? aud.includes(CONFIG_AUDIENCE)
+    : aud === CONFIG_AUDIENCE;
+  if (!audMatches) {
+    throw new Error(
+      `Invalid audience: expected "${CONFIG_AUDIENCE}", got ${
+        aud === undefined ? 'none' : `"${aud}"`
+      }`
+    );
+  }
+
   // 4. Confirm the signed payload claim matches the actual Redis payload
   if (claims.payload !== payload) {
     throw new Error('Config payload does not match signed payload claim');
