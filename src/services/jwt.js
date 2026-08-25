@@ -170,7 +170,42 @@ function verifyJwt(token, options = {}) {
     );
   }
 
+  // 4. Audience scoping.
+  //
+  // Without this, every token minted with JWT_SIGNING_SECRET was
+  // interchangeable: one issued for /metrics or /internal/webhooks/replay was
+  // equally valid as a *config signature*. That matters because
+  // CONFIG_ALLOWLIST includes STELLAR_HORIZON_URLS and STELLAR_RPC_URLS, so a
+  // leaked service token plus Redis write access could repoint the relayer's
+  // Horizon at an attacker's endpoint — on a process holding
+  // STELLAR_SECRET_KEY.
+  //
+  // Callers needing a specific audience pass `options.audience`. Tokens with
+  // no `aud` stay valid for unscoped callers, so existing service auth is
+  // unaffected.
+  if (options.audience !== undefined) {
+    const expected = options.audience;
+    const actual = claims.aud;
+    const matches = Array.isArray(actual)
+      ? actual.includes(expected)
+      : actual === expected;
+
+    if (!matches) {
+      throw Object.assign(
+        new Error(
+          `Invalid audience: expected "${expected}", got ${
+            actual === undefined ? 'none' : `"${actual}"`
+          }`
+        ),
+        JWT_ERROR_CODES.INVALID_ISSUER
+      );
+    }
+  }
+
   return claims;
 }
 
-module.exports = { signJwt, verifyJwt };
+/** Audience required on tokens that sign dynamic configuration. */
+const CONFIG_AUDIENCE = 'vero-config-sync';
+
+module.exports = { signJwt, verifyJwt, CONFIG_AUDIENCE };

@@ -1,7 +1,7 @@
 const Redis = require('ioredis');
 const { getRedisConnectionOptions } = require('../queue/redis');
 const { logger } = require('../logger');
-const { verifyJwt } = require('./jwt');
+const { verifyJwt, CONFIG_AUDIENCE } = require('./jwt');
 const { Worker } = require('worker_threads');
 const path = require('path');
 
@@ -53,7 +53,10 @@ const CONFIG_ALLOWLIST = new Set([
 
 function verifyConfigSignature(payload, signature) {
   try {
-    const decoded = verifyJwt(signature);
+    // Scoped audience: a token minted for service auth (/metrics, replay) must
+    // not double as a config signature. CONFIG_ALLOWLIST includes the Horizon
+    // and RPC endpoint lists, and this process holds STELLAR_SECRET_KEY.
+    const decoded = verifyJwt(signature, { audience: CONFIG_AUDIENCE });
 
     // Verify the payload matches the signed content
     if (decoded.payload !== payload) {

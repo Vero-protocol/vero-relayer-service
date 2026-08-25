@@ -46,7 +46,7 @@ require.cache[require.resolve('ioredis')] = {
 };
 
 const { pollConfig, dynamicConfig, verifyConfigSignature, applyConfig, handleWorkerConfigUpdate, CONFIG_ALLOWLIST } = require('../src/services/config-poller');
-const { signJwt } = require('../src/services/jwt');
+const { signJwt, CONFIG_AUDIENCE } = require('../src/services/jwt');
 const { getFeeEngineConfig } = require('../src/services/fee-engine');
 const { logger } = require('../src/logger');
 
@@ -109,7 +109,7 @@ test('config poller applies signed config with valid signature', async () => {
   };
   
   const payload = JSON.stringify(testConfig);
-  const signature = signJwt({ payload });
+  const signature = signJwt({ payload, aud: CONFIG_AUDIENCE });
   
   mockPayload = payload;
   mockSignature = signature;
@@ -346,4 +346,54 @@ test('[security] sensitive keys are blocked by the allowlist even with a valid s
   if (origDbUrl !== undefined) process.env.DATABASE_URL = origDbUrl;
   else delete process.env.DATABASE_URL;
   process.env.JWT_SIGNING_SECRET = 'test-signing-secret-32-chars-min!!';
+});
+
+// A token minted for ordinary service auth (/metrics, /internal/webhooks/replay)
+// used to be equally valid as a config signature — same secret, same issuer, no
+// audience claim anywhere. Since CONFIG_ALLOWLIST includes STELLAR_HORIZON_URLS
+// and STELLAR_RPC_URLS, and this process holds STELLAR_SECRET_KEY, that let a
+// leaked service token plus Redis write access repoint Horizon at an attacker.
+test('config poller rejects a signature without the config audience', async () => {
+  process.env.JWT_SIGNING_SECRET = 'test-jwt-secret-32-chars-long-0000000000';
+  process.env.JWT_ISSUER = 'test-issuer';
+  process.env.STELLAR_BASE_FEE = 'untouched';
+
+  const payload = JSON.stringify({ STELLAR_BASE_FEE: '999' });
+
+  // Exactly what a service-auth token looks like: valid signature, valid
+  // issuer, no `aud`.
+  mockPayload = payload;
+  mockSignature = signJwt({ payload });
+  mockConfigs = {};
+
+  await pollConfig();
+
+  assert.equal(
+    process.env.STELLAR_BASE_FEE,
+    'untouched',
+    'config must not be applied from a token lacking the config audience'
+  );
+
+  mockPayload = null;
+  mockSignature = null;
+  delete process.env.STELLAR_BASE_FEE;
+});
+
+test('config poller rejects a signature carrying a different audience', async () => {
+  process.env.JWT_SIGNING_SECRET = 'test-jwt-secret-32-chars-long-0000000000';
+  process.env.JWT_ISSUER = 'test-issuer';
+  process.env.STELLAR_BASE_FEE = 'untouched';
+
+  const payload = JSON.stringify({ STELLAR_BASE_FEE: '999' });
+  mockPayload = payload;
+  mockSignature = signJwt({ payload, aud: 'vero-service-auth' });
+  mockConfigs = {};
+
+  await pollConfig();
+
+  assert.equal(process.env.STELLAR_BASE_FEE, 'untouched');
+
+  mockPayload = null;
+  mockSignature = null;
+  delete process.env.STELLAR_BASE_FEE;
 });
