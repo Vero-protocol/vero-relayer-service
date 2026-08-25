@@ -18,3 +18,7 @@
    cp .env.example .env
    ```
    Then open `.env` in your editor and configure the variables with your local secrets. Do NOT commit the `.env` file containing real secrets to the repository.
+
+## Code of Conduct
+
+This project and everyone participating in it is governed by the [Vero Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.

@@ -134,6 +134,8 @@ vero-relayer-service/
 | `LOG_LEVEL` | No | Pino log level, defaults to `info` |
 | `LOG_REDACT_REMOVE` | No | Set to `true` to remove redacted fields instead of replacing with `[Redacted]` |
 | `ENABLE_HTTP_REQUEST_LOGS` | No | Set to `false` to disable automatic request completion logs |
+| `GITHUB_WEBHOOK_SECRET` | Yes* | Secret used to verify GitHub webhook signatures; may only be omitted when `ALLOW_UNSIGNED_WEBHOOKS=true` |
+| `ALLOW_UNSIGNED_WEBHOOKS` | No | Set explicitly to `true` to accept unsigned webhooks when no secret is configured; intended only for controlled local development and logs a security warning for every request |
 | `STELLAR_SECRET_KEY` | Yes | Signing key for the relayer account |
 | `STELLAR_NETWORK` | No | `testnet` (default) or `mainnet` |
 | `DATABASE_URL` | Yes | PostgreSQL connection string (takes precedence over individual params) |
@@ -190,9 +192,24 @@ The service uses PostgreSQL with pg-pool for persistent, efficient database conn
       "minConnections": 2,
       "totalErrors": 0
     }
+  },
+  "configSync": {
+    "healthy": true,
+    "status": "running",
+    "mode": "worker",
+    "stale": false,
+    "staleAfterMs": 15000,
+    "lastConfigSyncAt": "2024-01-15T10:29:58.000Z",
+    "restartAttempts": 0,
+    "maxRestartAttempts": 3
   }
 }
 ```
+
+The config sync is considered stale after three missed polling intervals. In
+async-worker mode, unexpected exits are restarted with bounded exponential
+backoff. If the restart budget is exhausted, or config sync becomes stale,
+`/health` returns `503` with `status: "DEGRADED"`.
 
 ### Performance Benchmarks
 
@@ -208,7 +225,7 @@ Expected results:
 - Zero failures under normal load
 - Graceful queuing when pool saturated
 
-For detailed configuration and usage patterns, see [docs/database-pooling.md](docs/database-pooling.md).
+For detailed configuration and usage patterns, see [docs/database-pooling.md](docs/database-pooling.md). For a quick cheat sheet, see [docs/POOL-QUICK-REFERENCE.md](docs/POOL-QUICK-REFERENCE.md).
 
 ---
 
@@ -373,3 +390,7 @@ contracts/vero-admin/
 cd contracts/vero-admin
 cargo test
 ```
+
+## Community & Code of Conduct
+
+We are committed to providing a welcoming and inspiring community for all. Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.

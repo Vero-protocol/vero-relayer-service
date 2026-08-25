@@ -12,8 +12,11 @@ const { storeRawEvent, fetchRawEvent } = require('./src/queue/raw-event-store');
 const { registerMetrics } = require('./src/metrics/metrics');
 const { enforceIdempotency } = require('./src/middleware/idempotency');
 const { logger } = require('./src/logger');
-const { startConfigPoller } = require('./src/services/config-poller');
-const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const { startConfigPoller, getConfigSyncHealth } = require('./src/services/config-poller');
+const {
+  publicRateLimiter,
+  authenticatedRateLimiter,
+} = require('./src/middleware/rateLimit');
 const { runMigrations } = require('./src/db/run-migrations');
 const { healthCheck: dbHealthCheck, getPoolMetrics } = require('./src/db/client');
 const { sendError } = require('./src/utils/http-errors');
@@ -23,6 +26,9 @@ function createApp(options = {}) {
   const storeRawEventFn = options.storeRawEvent || storeRawEvent;
   const fetchRawEventFn = options.fetchRawEvent || fetchRawEvent;
   const idempotencyMiddleware = options.idempotencyMiddleware || enforceIdempotency;
+  const dbHealthCheckFn = options.dbHealthCheck || dbHealthCheck;
+  const getPoolMetricsFn = options.getPoolMetrics || getPoolMetrics;
+  const getConfigSyncHealthFn = options.getConfigSyncHealth || getConfigSyncHealth;
   const app = express();
 
   // Trust the first proxy hop so X-Forwarded-For is used to resolve the real
@@ -39,28 +45,34 @@ function createApp(options = {}) {
 
   app.get('/health', async (req, res) => {
     try {
-      const dbHealth = await dbHealthCheck();
-      const poolMetrics = getPoolMetrics();
-      
-      if (dbHealth.healthy) {
-        return res.status(200).json({
-          status: 'OK',
-          timestamp: new Date().toISOString(),
-          database: {
+      const dbHealth = await dbHealthCheckFn();
+      const poolMetrics = getPoolMetricsFn();
+      const configSync = getConfigSyncHealthFn();
+      const database = dbHealth.healthy
+        ? {
             healthy: true,
             latencyMs: dbHealth.latencyMs,
             pool: poolMetrics,
-          },
+          }
+        : {
+            healthy: false,
+            error: dbHealth.error,
+            pool: poolMetrics,
+          };
+
+      if (dbHealth.healthy && configSync.healthy) {
+        return res.status(200).json({
+          status: 'OK',
+          timestamp: new Date().toISOString(),
+          database,
+          configSync,
         });
       } else {
         return res.status(503).json({
           status: 'DEGRADED',
           timestamp: new Date().toISOString(),
-          database: {
-            healthy: false,
-            error: dbHealth.error,
-            pool: poolMetrics,
-          },
+          database,
+          configSync,
         });
       }
     } catch (error) {
@@ -73,8 +85,10 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // The public limiter classifies once and skips verified requests; the auth
+  // limiter has the inverse skip rule. Enforcement remains after both so
+  // invalid attempts consume public quota before rejection.
+  app.post('/github-webhook', publicRateLimiter, authenticatedRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });

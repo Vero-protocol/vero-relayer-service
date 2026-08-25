@@ -16,7 +16,7 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
-COPY index.js stellar.js ./
+COPY index.js ./
 COPY src ./src
 
 # The base image ships a non-root `node` user (uid 1000) — use it instead

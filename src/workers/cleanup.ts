@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import defaultPool from '../db/client';
+import { pool as defaultPool } from '../db/client';
 import { logger } from '../logger';
 
 /**
