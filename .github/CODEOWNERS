@@ -1,0 +1,34 @@
+# CODEOWNERS for vero-relayer-service
+# Default review ownership: org maintainers until per-module owners exist.
+# Last matching pattern wins. See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default — entire repository
+* @N-thnl @I-1-xx
+
+# Security-sensitive paths (explicit for review routing)
+/SECURITY.md @N-thnl @I-1-xx
+/.github/workflows/ @N-thnl @I-1-xx
+
+# Auth / middleware / webhook surface
+/src/middleware/ @N-thnl @I-1-xx
+/src/middleware/auth.js @N-thnl @I-1-xx
+
+# Stellar / on-chain settlement
+/src/services/ @N-thnl @I-1-xx
+/src/services/stellar.js @N-thnl @I-1-xx
+/src/services/config-*.js @N-thnl @I-1-xx
+/src/services/config-poller.js @N-thnl @I-1-xx
+/src/services/jwt*.js @N-thnl @I-1-xx
+
+# Queue, workers, DB
+/src/queue/ @N-thnl @I-1-xx
+/src/workers/ @N-thnl @I-1-xx
+/src/db/ @N-thnl @I-1-xx
+
+# Top-level app entry
+/index.js @N-thnl @I-1-xx
+/src/ @N-thnl @I-1-xx
+
+# Docs (still owned; lower risk than settlement paths)
+/docs/ @N-thnl @I-1-xx
