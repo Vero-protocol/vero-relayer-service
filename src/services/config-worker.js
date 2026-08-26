@@ -178,6 +178,7 @@ async function pollConfig() {
     // --- Unsigned fallback path ---
     // Only active when the operator has explicitly opted in via CONFIG_SYNC_ALLOW_UNSIGNED.
     if (!workerData.allowUnsigned) {
+      parentPort.postMessage({ type: 'syncSuccess' });
       return;
     }
 
@@ -188,7 +189,10 @@ async function pollConfig() {
         configs,
         source: 'unsigned'
       });
+      return;
     }
+
+    parentPort.postMessage({ type: 'syncSuccess' });
   } catch (error) {
     parentPort.postMessage({
       type: 'error',
