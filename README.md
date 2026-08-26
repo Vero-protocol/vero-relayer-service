@@ -192,9 +192,24 @@ The service uses PostgreSQL with pg-pool for persistent, efficient database conn
       "minConnections": 2,
       "totalErrors": 0
     }
+  },
+  "configSync": {
+    "healthy": true,
+    "status": "running",
+    "mode": "worker",
+    "stale": false,
+    "staleAfterMs": 15000,
+    "lastConfigSyncAt": "2024-01-15T10:29:58.000Z",
+    "restartAttempts": 0,
+    "maxRestartAttempts": 3
   }
 }
 ```
+
+The config sync is considered stale after three missed polling intervals. In
+async-worker mode, unexpected exits are restarted with bounded exponential
+backoff. If the restart budget is exhausted, or config sync becomes stale,
+`/health` returns `503` with `status: "DEGRADED"`.
 
 ### Performance Benchmarks
 
