@@ -25,16 +25,27 @@ const { Networks } = require('@stellar/stellar-sdk');
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Capture the root serverUrl that a Horizon.Server was constructed with. */
+/** Return the full URL string a Horizon.Server was constructed with. */
 function horizonServerUrl(server) {
-  // Horizon.Server stores the server URL in server.serverURL (a URI object).
-  // Coerce to string and strip any trailing slash for consistent comparison.
   return String(server.serverURL).replace(/\/$/, '');
 }
 
-/** Capture the root serverUrl that an rpc.Server was constructed with. */
+/** Return the full URL string an rpc.Server was constructed with. */
 function rpcServerUrl(server) {
   return String(server.serverURL).replace(/\/$/, '');
+}
+
+/**
+ * Extract the hostname from a server URL string.
+ * Using new URL() hostname avoids substring-match false positives that
+ * CodeQL flags when .includes() is used to check URL components.
+ */
+function horizonHostname(server) {
+  return new URL(horizonServerUrl(server)).hostname;
+}
+
+function rpcHostname(server) {
+  return new URL(rpcServerUrl(server)).hostname;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +96,10 @@ test('AC-1: getHorizonServer() returns a server on the NEW URL after STELLAR_HOR
   // First call — establishes a cached instance for the original URL
   process.env.STELLAR_HORIZON_URLS = 'https://horizon-v1.example.com';
   const server1 = factory.getHorizonServer();
-  assert.ok(
-    horizonServerUrl(server1).includes('horizon-v1.example.com'),
-    `Expected horizon-v1.example.com, got: ${horizonServerUrl(server1)}`
+  assert.equal(
+    horizonHostname(server1),
+    'horizon-v1.example.com',
+    `Expected hostname horizon-v1.example.com, got: ${horizonHostname(server1)}`
   );
 
   // Mutate the env — simulates what config-poller does at runtime
@@ -96,9 +108,10 @@ test('AC-1: getHorizonServer() returns a server on the NEW URL after STELLAR_HOR
   // The factory should detect the state change and return an instance for
   // the NEW url, not the stale cached one.
   const server2 = factory.getHorizonServer();
-  assert.ok(
-    horizonServerUrl(server2).includes('horizon-v2.example.com'),
-    `Expected horizon-v2.example.com, got: ${horizonServerUrl(server2)}`
+  assert.equal(
+    horizonHostname(server2),
+    'horizon-v2.example.com',
+    `Expected hostname horizon-v2.example.com, got: ${horizonHostname(server2)}`
   );
 
   // The two instances must be different objects
@@ -110,17 +123,19 @@ test('AC-1: getSorobanServer() returns a server on the NEW URL after STELLAR_RPC
 
   process.env.STELLAR_RPC_URLS = 'https://rpc-v1.example.com';
   const server1 = factory.getSorobanServer();
-  assert.ok(
-    rpcServerUrl(server1).includes('rpc-v1.example.com'),
-    `Expected rpc-v1.example.com, got: ${rpcServerUrl(server1)}`
+  assert.equal(
+    rpcHostname(server1),
+    'rpc-v1.example.com',
+    `Expected hostname rpc-v1.example.com, got: ${rpcHostname(server1)}`
   );
 
   process.env.STELLAR_RPC_URLS = 'https://rpc-v2.example.com';
 
   const server2 = factory.getSorobanServer();
-  assert.ok(
-    rpcServerUrl(server2).includes('rpc-v2.example.com'),
-    `Expected rpc-v2.example.com, got: ${rpcServerUrl(server2)}`
+  assert.equal(
+    rpcHostname(server2),
+    'rpc-v2.example.com',
+    `Expected hostname rpc-v2.example.com, got: ${rpcHostname(server2)}`
   );
 
   assert.notEqual(server1, server2, 'server1 and server2 must be different instances');
@@ -154,20 +169,19 @@ test('AC-1: default Horizon URL follows STELLAR_NETWORK when no explicit URL lis
 
   process.env.STELLAR_NETWORK = 'testnet';
   const testnetServer = factory.getHorizonServer();
-  assert.ok(
-    horizonServerUrl(testnetServer).includes('testnet'),
-    `Expected a testnet URL, got: ${horizonServerUrl(testnetServer)}`
+  // Exact hostname check — avoids CodeQL "incomplete URL substring sanitization"
+  assert.equal(
+    horizonHostname(testnetServer),
+    'horizon-testnet.stellar.org',
+    `Expected horizon-testnet.stellar.org, got: ${horizonHostname(testnetServer)}`
   );
 
   process.env.STELLAR_NETWORK = 'mainnet';
   const mainnetServer = factory.getHorizonServer();
-  assert.ok(
-    !horizonServerUrl(mainnetServer).includes('testnet'),
-    `Expected a mainnet URL (no "testnet"), got: ${horizonServerUrl(mainnetServer)}`
-  );
-  assert.ok(
-    horizonServerUrl(mainnetServer).includes('horizon.stellar.org'),
-    `Expected horizon.stellar.org, got: ${horizonServerUrl(mainnetServer)}`
+  assert.equal(
+    horizonHostname(mainnetServer),
+    'horizon.stellar.org',
+    `Expected horizon.stellar.org, got: ${horizonHostname(mainnetServer)}`
   );
 });
 
@@ -179,16 +193,18 @@ test('AC-1: default RPC URL follows STELLAR_NETWORK when no explicit URL list is
 
   process.env.STELLAR_NETWORK = 'testnet';
   const testnetServer = factory.getSorobanServer();
-  assert.ok(
-    rpcServerUrl(testnetServer).includes('testnet'),
-    `Expected a testnet RPC URL, got: ${rpcServerUrl(testnetServer)}`
+  assert.equal(
+    rpcHostname(testnetServer),
+    'soroban-testnet.stellar.org',
+    `Expected soroban-testnet.stellar.org, got: ${rpcHostname(testnetServer)}`
   );
 
   process.env.STELLAR_NETWORK = 'mainnet';
   const mainnetServer = factory.getSorobanServer();
-  assert.ok(
-    !rpcServerUrl(mainnetServer).includes('testnet'),
-    `Expected a mainnet RPC URL (no "testnet"), got: ${rpcServerUrl(mainnetServer)}`
+  assert.equal(
+    rpcHostname(mainnetServer),
+    'rpc.stellar.org',
+    `Expected rpc.stellar.org, got: ${rpcHostname(mainnetServer)}`
   );
 });
 
@@ -214,12 +230,12 @@ test('AC-2: after flipping STELLAR_NETWORK to mainnet, Horizon host and signing 
   const network1 = process.env.STELLAR_NETWORK || 'testnet';
   const passphrase1 = network1 === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
   const horizonServer1 = factory.getHorizonServer();
-  const horizonUrl1 = horizonServerUrl(horizonServer1);
 
   assert.equal(passphrase1, Networks.TESTNET, 'testnet: passphrase should be TESTNET');
-  assert.ok(
-    horizonUrl1.includes('testnet'),
-    `testnet: Horizon URL should include "testnet", got: ${horizonUrl1}`
+  assert.equal(
+    horizonHostname(horizonServer1),
+    'horizon-testnet.stellar.org',
+    `testnet: expected horizon-testnet.stellar.org, got: ${horizonHostname(horizonServer1)}`
   );
 
   // ---- Flip to mainnet (what config-poller.applyConfig does) ----------
@@ -228,25 +244,22 @@ test('AC-2: after flipping STELLAR_NETWORK to mainnet, Horizon host and signing 
   const network2 = process.env.STELLAR_NETWORK || 'testnet';
   const passphrase2 = network2 === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
   const horizonServer2 = factory.getHorizonServer();
-  const horizonUrl2 = horizonServerUrl(horizonServer2);
+  const hostname2 = horizonHostname(horizonServer2);
 
   assert.equal(passphrase2, Networks.PUBLIC, 'mainnet: passphrase should be PUBLIC');
-  assert.ok(
-    !horizonUrl2.includes('testnet'),
-    `mainnet: Horizon URL must NOT include "testnet", got: ${horizonUrl2}`
-  );
-  assert.ok(
-    horizonUrl2.includes('horizon.stellar.org'),
-    `mainnet: Horizon URL should be horizon.stellar.org, got: ${horizonUrl2}`
+  assert.equal(
+    hostname2,
+    'horizon.stellar.org',
+    `mainnet: expected horizon.stellar.org, got: ${hostname2}`
   );
 
   // The key invariant: both sides agree on the network
   const passphraseIsMainnet = passphrase2 === Networks.PUBLIC;
-  const horizonIsMainnet = !horizonUrl2.includes('testnet');
+  const horizonIsMainnet = hostname2 === 'horizon.stellar.org';
   assert.equal(
     passphraseIsMainnet,
     horizonIsMainnet,
-    `Network/passphrase divergence detected! passphrase=mainnet:${passphraseIsMainnet}, horizon=mainnet:${horizonIsMainnet}`
+    `Network/passphrase divergence! passphrase=mainnet:${passphraseIsMainnet}, horizon=mainnet:${horizonIsMainnet}`
   );
 });
 
@@ -265,12 +278,13 @@ test('AC-2: after flipping STELLAR_NETWORK to testnet, Horizon host and signing 
 
   const network = process.env.STELLAR_NETWORK || 'testnet';
   const passphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
-  const horizonUrl = horizonServerUrl(factory.getHorizonServer());
+  const hostname = horizonHostname(factory.getHorizonServer());
 
   assert.equal(passphrase, Networks.TESTNET, 'passphrase should be TESTNET after flip');
-  assert.ok(
-    horizonUrl.includes('testnet'),
-    `Horizon URL should include "testnet" after flip, got: ${horizonUrl}`
+  assert.equal(
+    hostname,
+    'horizon-testnet.stellar.org',
+    `Expected horizon-testnet.stellar.org after flip, got: ${hostname}`
   );
 });
 
