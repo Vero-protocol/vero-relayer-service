@@ -205,7 +205,7 @@ async function validateSetup() {
   
   const requiredFiles = [
     'benchmarks/pool-performance.js',
-    'tests/pool-integration.test.js',
+    'test/pool-integration.test.js',
     'docs/database-pooling.md',
     'docs/MIGRATION-POOL.md',
     'docs/POOL-QUICK-REFERENCE.md',
@@ -235,7 +235,7 @@ async function validateSetup() {
   if (results.failed === 0) {
     console.log('\n✨ SUCCESS! PostgreSQL connection pool is properly configured.');
     console.log('\n📚 Next Steps:');
-    console.log('   1. Run integration tests: node --test tests/pool-integration.test.js');
+    console.log('   1. Run integration tests: node --test test/pool-integration.test.js');
     console.log('   2. Run benchmarks: npm run benchmark:pool');
     console.log('   3. Start application: npm start');
     console.log('   4. Check health: curl http://localhost:3000/health');
