@@ -100,7 +100,7 @@ npm start | grep '\[db\]'
 
 ```bash
 # Run integration tests
-node --test tests/pool-integration.test.js
+node --test test/pool-integration.test.js
 
 # Run performance benchmarks
 npm run benchmark:pool
