@@ -397,3 +397,91 @@ test('config poller rejects a signature carrying a different audience', async ()
   mockSignature = null;
   delete process.env.STELLAR_BASE_FEE;
 });
+
+// ============================================================================
+// RPC factory cache invalidation — issue #221
+// ============================================================================
+
+// When applyConfig writes any of the three network/endpoint keys
+// (STELLAR_NETWORK, STELLAR_HORIZON_URLS, STELLAR_RPC_URLS), it must call
+// rpcFactory.invalidateCache() so the very next getHorizonServer() or
+// getSorobanServer() call picks up the new values instead of stale ones.
+
+test('[rpc-factory integration] applyConfig calls rpcFactory.invalidateCache() when STELLAR_NETWORK changes', async () => {
+  // Intercept the rpc-factory module's invalidateCache method to spy on it.
+  // We require it here so we get the same singleton that config-poller.js uses
+  // (Node's module cache guarantees only one instance).
+  const rpcFactory = require('../src/services/rpc-factory');
+
+  let invalidated = false;
+  const origInvalidate = rpcFactory.invalidateCache.bind(rpcFactory);
+  rpcFactory.invalidateCache = () => {
+    invalidated = true;
+    origInvalidate();
+  };
+
+  try {
+    await applyConfig({ STELLAR_NETWORK: 'mainnet' }, 'test');
+    assert.equal(invalidated, true, 'invalidateCache() must be called when STELLAR_NETWORK changes');
+  } finally {
+    rpcFactory.invalidateCache = origInvalidate;
+    delete process.env.STELLAR_NETWORK;
+  }
+});
+
+test('[rpc-factory integration] applyConfig calls rpcFactory.invalidateCache() when STELLAR_HORIZON_URLS changes', async () => {
+  const rpcFactory = require('../src/services/rpc-factory');
+
+  let invalidated = false;
+  const origInvalidate = rpcFactory.invalidateCache.bind(rpcFactory);
+  rpcFactory.invalidateCache = () => {
+    invalidated = true;
+    origInvalidate();
+  };
+
+  try {
+    await applyConfig({ STELLAR_HORIZON_URLS: 'https://horizon-new.example.com' }, 'test');
+    assert.equal(invalidated, true, 'invalidateCache() must be called when STELLAR_HORIZON_URLS changes');
+  } finally {
+    rpcFactory.invalidateCache = origInvalidate;
+    delete process.env.STELLAR_HORIZON_URLS;
+  }
+});
+
+test('[rpc-factory integration] applyConfig calls rpcFactory.invalidateCache() when STELLAR_RPC_URLS changes', async () => {
+  const rpcFactory = require('../src/services/rpc-factory');
+
+  let invalidated = false;
+  const origInvalidate = rpcFactory.invalidateCache.bind(rpcFactory);
+  rpcFactory.invalidateCache = () => {
+    invalidated = true;
+    origInvalidate();
+  };
+
+  try {
+    await applyConfig({ STELLAR_RPC_URLS: 'https://rpc-new.example.com' }, 'test');
+    assert.equal(invalidated, true, 'invalidateCache() must be called when STELLAR_RPC_URLS changes');
+  } finally {
+    rpcFactory.invalidateCache = origInvalidate;
+    delete process.env.STELLAR_RPC_URLS;
+  }
+});
+
+test('[rpc-factory integration] applyConfig does NOT call rpcFactory.invalidateCache() for non-endpoint keys', async () => {
+  const rpcFactory = require('../src/services/rpc-factory');
+
+  let invalidated = false;
+  const origInvalidate = rpcFactory.invalidateCache.bind(rpcFactory);
+  rpcFactory.invalidateCache = () => {
+    invalidated = true;
+    origInvalidate();
+  };
+
+  try {
+    // Only allowlisted non-endpoint keys — must NOT trigger invalidation
+    await applyConfig({ STELLAR_BASE_FEE: '200', LOG_LEVEL: 'info' }, 'test');
+    assert.equal(invalidated, false, 'invalidateCache() must NOT be called for non-endpoint keys');
+  } finally {
+    rpcFactory.invalidateCache = origInvalidate;
+  }
+});

@@ -243,6 +243,23 @@ async function applyConfig(configs, source) {
   // Clear fee engine cache when config changes to ensure new values are used
   const { clearFeeEstimateCache } = require('./fee-engine');
   clearFeeEstimateCache();
+
+  // If any of the three network/endpoint keys changed, flush the rpc-factory
+  // instance cache so the next getHorizonServer()/getSorobanServer() call
+  // picks up the new values rather than the stale pre-change snapshots.
+  // This eliminates the passphrase/endpoint divergence described in the
+  // network/passphrase bug: stellar.js re-reads STELLAR_NETWORK per call,
+  // so without this flush the factory would still point at the old network.
+  const RPC_ENDPOINT_KEYS = ['STELLAR_NETWORK', 'STELLAR_HORIZON_URLS', 'STELLAR_RPC_URLS'];
+  const endpointChanged = allowed.some(k => RPC_ENDPOINT_KEYS.includes(k));
+  if (endpointChanged) {
+    const rpcFactory = require('./rpc-factory');
+    rpcFactory.invalidateCache();
+    logger.info(
+      { changedKeys: allowed.filter(k => RPC_ENDPOINT_KEYS.includes(k)) },
+      '[config-poller] RPC factory cache invalidated after endpoint/network config change'
+    );
+  }
 }
 
 function startConfigPoller() {
