@@ -1,0 +1,67 @@
+name: ✨ Feature Request
+description: Propose a new capability for the Vero Relayer Service
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ✨ Feature Request
+        Describe the capability you would like and the problem it solves.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this solve? Describe the situation that motivates it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Transaction submission / broadcaster
+        - Nonce & sequence management
+        - RPC factory / endpoint failover
+        - Fee engine
+        - Config poller / dynamic configuration
+        - Queue & workers
+        - Auth (JWT) / rate limiting
+        - Metrics & diagnostics
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know this is done?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues for a duplicate
+          required: true
