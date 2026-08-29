@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const { Queue } = require('bullmq');
 const { EVENT_TYPES } = require('./types');
+const logger = require('../logger');
+const { createInMemorySpikeBuffer } = require('./in-memory-spike-buffer');
 const {
   getBullMqQueueSettings,
   getEventQueueName,
@@ -32,6 +34,15 @@ function getDefaultJobOptions(env = process.env) {
 const DEFAULT_JOB_OPTIONS = getDefaultJobOptions();
 
 let eventQueue;
+
+let spikeBuffer;
+
+function getSpikeBuffer() {
+  if (!spikeBuffer) {
+    spikeBuffer = createInMemorySpikeBuffer({ concurrency: 1, logger });
+  }
+  return spikeBuffer;
+}
 
 function createEventQueue(options = {}) {
   const settings = getBullMqQueueSettings(options.queueName || getEventQueueName(options.env));
@@ -169,9 +180,20 @@ async function enqueueEvent(eventPayload, options = {}) {
   const queue = options.queue || getEventQueue();
   const jobId = options.jobId || createEventJobId(eventPayload);
 
-  return queue.add(EVENT_JOB_NAME, eventPayload, {
-    jobId
-  });
+  try {
+    return await queue.add(EVENT_JOB_NAME, eventPayload, {
+      jobId
+    });
+  } catch (err) {
+    // BullMQ/Redis unavailable: absorb the validated event into the in-memory
+    // spike buffer so it is never dropped. The buffer re-enqueues (concurrency 1)
+    // once connectivity returns. See issue #2.
+    logger.warn(
+      { err: err && err.message, jobId },
+      '[event-queue] BullMQ enqueue failed; buffering in memory'
+    );
+    return getSpikeBuffer().enqueue(eventPayload, { id: jobId });
+  }
 }
 
 async function closeEventQueue() {
