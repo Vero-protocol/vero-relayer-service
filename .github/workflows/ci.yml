@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least-privilege default; individual jobs opt into more if they need it.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch/PR to save Actions minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Test-only placeholder values — never real secrets. Services below are
+  # ephemeral containers scoped to this job and torn down when it ends.
+  NODE_ENV: test
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vero_relayer_test
+  PGHOST: localhost
+  PGPORT: 5432
+  PGUSER: postgres
+  PGPASSWORD: postgres
+  PGDATABASE: vero_relayer_test
+  REDIS_HOST: localhost
+  REDIS_PORT: 6379
+  JWT_SIGNING_SECRET: ci-test-only-jwt-signing-secret-not-for-production-use
+  JWT_ISSUER: vero-relayer-service
+  GITHUB_WEBHOOK_SECRET: ci-test-only-webhook-secret
+  STELLAR_SECRET_KEY: ci-test-placeholder-not-a-real-stellar-key
+  STELLAR_NETWORK: testnet
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    # Blocking again: the hangs (leaked Postgres/Redis/rpc-cache connections
+    # across several test files) and the two remaining test flakes (a
+    # rate-limit key collision bug, a too-short JWT test secret) are fixed
+    # and root-caused, confirmed clean across multiple consecutive runs.
+    # timeout-minutes stays as a cheap safety net — caps any future hang at
+    # 10 minutes instead of the 360-minute platform default.
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.x', '24.x']
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vero_relayer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Run database migrations
+        run: npm run db:migrate
+
+      - name: Run test suite
+        run: npm test
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails the job on any high/critical advisory. Moderate/low findings
+      # are surfaced but don't block — triage those via Dependabot PRs.
+      - name: npm audit (high/critical)
+        run: npm audit --audit-level=high
+
+  docker-build:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: vero-relayer-service:ci

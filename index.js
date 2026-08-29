@@ -12,16 +12,23 @@ const { storeRawEvent, fetchRawEvent } = require('./src/queue/raw-event-store');
 const { registerMetrics } = require('./src/metrics/metrics');
 const { enforceIdempotency } = require('./src/middleware/idempotency');
 const { logger } = require('./src/logger');
-const { startConfigPoller } = require('./src/services/config-poller');
-const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const { startConfigPoller, getConfigSyncHealth } = require('./src/services/config-poller');
+const {
+  publicRateLimiter,
+  authenticatedRateLimiter,
+} = require('./src/middleware/rateLimit');
 const { runMigrations } = require('./src/db/run-migrations');
 const { healthCheck: dbHealthCheck, getPoolMetrics } = require('./src/db/client');
+const { sendError } = require('./src/utils/http-errors');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
   const storeRawEventFn = options.storeRawEvent || storeRawEvent;
   const fetchRawEventFn = options.fetchRawEvent || fetchRawEvent;
   const idempotencyMiddleware = options.idempotencyMiddleware || enforceIdempotency;
+  const dbHealthCheckFn = options.dbHealthCheck || dbHealthCheck;
+  const getPoolMetricsFn = options.getPoolMetrics || getPoolMetrics;
+  const getConfigSyncHealthFn = options.getConfigSyncHealth || getConfigSyncHealth;
   const app = express();
 
   // Trust the first proxy hop so X-Forwarded-For is used to resolve the real
@@ -34,32 +41,38 @@ function createApp(options = {}) {
     }
   }));
 
-  registerMetrics(app);
+  registerMetrics(app, { authMiddleware: verifyJwtBearer });
 
   app.get('/health', async (req, res) => {
     try {
-      const dbHealth = await dbHealthCheck();
-      const poolMetrics = getPoolMetrics();
-      
-      if (dbHealth.healthy) {
-        return res.status(200).json({
-          status: 'OK',
-          timestamp: new Date().toISOString(),
-          database: {
+      const dbHealth = await dbHealthCheckFn();
+      const poolMetrics = getPoolMetricsFn();
+      const configSync = getConfigSyncHealthFn();
+      const database = dbHealth.healthy
+        ? {
             healthy: true,
             latencyMs: dbHealth.latencyMs,
             pool: poolMetrics,
-          },
+          }
+        : {
+            healthy: false,
+            error: dbHealth.error,
+            pool: poolMetrics,
+          };
+
+      if (dbHealth.healthy && configSync.healthy) {
+        return res.status(200).json({
+          status: 'OK',
+          timestamp: new Date().toISOString(),
+          database,
+          configSync,
         });
       } else {
         return res.status(503).json({
           status: 'DEGRADED',
           timestamp: new Date().toISOString(),
-          database: {
-            healthy: false,
-            error: dbHealth.error,
-            pool: poolMetrics,
-          },
+          database,
+          configSync,
         });
       }
     } catch (error) {
@@ -72,8 +85,10 @@ function createApp(options = {}) {
     }
   });
 
-  // GitHub webhook endpoint — rate-limited before signature verification
-  app.post('/github-webhook', ingestRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
+  // The public limiter classifies once and skips verified requests; the auth
+  // limiter has the inverse skip rule. Enforcement remains after both so
+  // invalid attempts consume public quota before rejection.
+  app.post('/github-webhook', publicRateLimiter, authenticatedRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
@@ -93,7 +108,7 @@ function createApp(options = {}) {
       return res.status(202).json({ ok: true, pr: pr.number, queued: true, jobId: job.id });
     } catch (error) {
       logger.error({ pr: pr.number, error: error.message }, '[webhook] failed to enqueue PR');
-      return res.status(500).json({ ok: false, error: 'failed to enqueue event' });
+      return sendError(res, 500, 'ENQUEUE_FAILED', 'failed to enqueue event');
     }
   });
 
@@ -103,14 +118,14 @@ function createApp(options = {}) {
     const { idempotencyKey } = req.body;
 
     if (!idempotencyKey || typeof idempotencyKey !== 'string') {
-      return res.status(400).json({ ok: false, error: 'idempotencyKey is required' });
+      return sendError(res, 400, 'MISSING_IDEMPOTENCY_KEY', 'idempotencyKey is required');
     }
 
     try {
       const stored = await fetchRawEventFn(idempotencyKey);
 
       if (!stored) {
-        return res.status(404).json({ ok: false, error: 'raw event not found' });
+        return sendError(res, 404, 'NOT_FOUND', 'raw event not found');
       }
 
       const eventPayload = buildGitHubPullRequestEventPayload(stored.rawEvent, stored.metadata);
@@ -120,7 +135,7 @@ function createApp(options = {}) {
       return res.status(202).json({ ok: true, replayed: true, jobId: job.id });
     } catch (error) {
       logger.error({ idempotencyKey, error: error.message }, '[webhook] failed to replay raw event');
-      return res.status(500).json({ ok: false, error: 'failed to replay raw event' });
+      return sendError(res, 500, 'REPLAY_FAILED', 'failed to replay raw event');
     }
   });
 

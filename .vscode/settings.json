@@ -1,0 +1,8 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "/^node --test --require \\./test/global-teardown\\.js test/cleanup\\.test\\.js$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}

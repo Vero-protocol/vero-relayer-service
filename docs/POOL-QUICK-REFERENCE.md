@@ -1,36 +1,32 @@
 # PostgreSQL Pool - Quick Reference
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # 1. Configure environment
 DATABASE_URL=postgresql://user:pass@host:5432/db
+DB_POOL_MIN=2
 DB_POOL_MAX=20
 
 # 2. Start application
 npm start
 
 # 3. Verify health
-curl http://localhost:3000/health
+curl http://localhost:3000/health | jq '.database'
 ```
 
----
+## Common Usage Patterns
 
-## 📝 Common Usage Patterns
-
-### Simple Query (Automatic Connection Management)
+### Simple Query
 ```javascript
 const { pool } = require('./src/db/client');
-
-// Pool automatically acquires and releases connection
 const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
 return result.rows[0];
 ```
 
-### Transaction (Explicit Client)
+### Transaction
 ```javascript
 const { pool } = require('./src/db/client');
-
 const client = await pool.connect();
 try {
   await client.query('BEGIN');
@@ -41,14 +37,13 @@ try {
   await client.query('ROLLBACK');
   throw error;
 } finally {
-  client.release(); // ⚠️ Critical: Always release
+  client.release();
 }
 ```
 
-### Advisory Lock Pattern
+### Advisory Lock
 ```javascript
 const { pool } = require('./src/db/client');
-
 const client = await pool.connect();
 try {
   await client.query('SELECT pg_advisory_lock($1)', [lockKey]);
@@ -59,11 +54,7 @@ try {
 }
 ```
 
----
-
-## 🔧 Configuration
-
-### Environment Variables
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -86,16 +77,14 @@ DB_POOL_MIN=5 DB_POOL_MAX=20
 DB_POOL_MIN=10 DB_POOL_MAX=50
 ```
 
----
-
-## 📊 Monitoring
+## Monitoring
 
 ### Health Check
 ```bash
 curl http://localhost:3000/health | jq '.database'
 ```
 
-### Get Pool Metrics Programmatically
+### Get Pool Metrics
 ```javascript
 const { getPoolMetrics } = require('./src/db/client');
 const metrics = getPoolMetrics();
@@ -104,17 +93,14 @@ console.log(`Active: ${metrics.totalConnections - metrics.idleConnections}`);
 
 ### Watch Logs
 ```bash
-# Filter database pool logs
 npm start | grep '\[db\]'
 ```
 
----
-
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run integration tests
-node --test tests/pool-integration.test.js
+node --test test/pool-integration.test.js
 
 # Run performance benchmarks
 npm run benchmark:pool
@@ -123,87 +109,67 @@ npm run benchmark:pool
 node -e "require('dotenv').config(); require('./src/db/client').healthCheck().then(r => console.log(r))"
 ```
 
----
+## Common Mistakes
 
-## ⚠️ Common Mistakes
-
-### ❌ Don't: Forget to Release
+### Don't: Forget to Release
 ```javascript
 const client = await pool.connect();
 await client.query('SELECT 1');
 // ❌ Missing client.release() - connection leak!
 ```
 
-### ✅ Do: Always Release in Finally
+### Do: Always Release in Finally
 ```javascript
 const client = await pool.connect();
 try {
   await client.query('SELECT 1');
 } finally {
-  client.release(); // ✅ Guaranteed release
+  client.release(); // Guaranteed release
 }
 ```
 
-### ❌ Don't: Create New Pool
+### Don't: Create New Pool
 ```javascript
-// ❌ Creates duplicate pool
+// Creates duplicate pool
 const { Pool } = require('pg');
 const myPool = new Pool({ ... });
 ```
 
-### ✅ Do: Use Singleton
+### Do: Use Singleton
 ```javascript
-// ✅ Uses shared pool
+// Uses shared pool
 const { pool } = require('./src/db/client');
 ```
 
----
-
-## 🔍 Troubleshooting
+## Troubleshooting
 
 ### Connection Timeout
 ```bash
-# Increase timeout
 DB_POOL_CONNECTION_TIMEOUT=10000
-
-# Check database connectivity
 psql $DATABASE_URL -c "SELECT 1"
 ```
 
 ### Pool Exhausted
 ```bash
-# Increase max connections
 DB_POOL_MAX=50
-
-# Find connection leaks
-grep "acquired from pool" app.log | wc -l
-grep "released" app.log | wc -l
-# If acquired > released, you have leaks
+# Check for leaks: acquired count should equal released count
 ```
 
 ### Too Many Connections
 ```sql
--- Check active connections
 SELECT count(*) FROM pg_stat_activity WHERE datname = 'your_db';
-
--- Check PostgreSQL max
 SHOW max_connections;
 ```
 
----
+## Performance Tips
 
-## 📈 Performance Tips
+1. Use `pool.query()` for simple queries (automatic management)
+2. Use `pool.connect()` only for transactions or locks
+3. Always release in `finally` blocks
+4. Set `DB_POOL_MAX` < database `max_connections`
+5. Monitor `waitingClients` metric (should stay at 0)
 
-1. **Use `pool.query()` for simple queries** (automatic management)
-2. **Use `pool.connect()` only for transactions or locks**
-3. **Always release in `finally` blocks**
-4. **Set `DB_POOL_MAX` < database `max_connections`**
-5. **Monitor `waitingClients` metric** (should stay at 0)
-6. **Use connection string over individual params** (cleaner)
-
----
-
-## 🔐 Security Checklist
+## Security Checklist
 
 - [ ] Credentials in `.env` only
 - [ ] `.env` in `.gitignore`
@@ -212,11 +178,7 @@ SHOW max_connections;
 - [ ] Minimum database privileges
 - [ ] No credentials in logs
 
----
-
-## 📚 More Information
+## More Information
 
 - [Full Documentation](./database-pooling.md)
-- [Migration Guide](./MIGRATION-POOL.md)
-- [Implementation Summary](./POOL-IMPLEMENTATION-SUMMARY.md)
 - [node-postgres Docs](https://node-postgres.com/features/pooling)

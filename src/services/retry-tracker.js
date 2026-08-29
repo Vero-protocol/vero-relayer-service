@@ -1,26 +1,60 @@
+require('dotenv').config();
+
 const { pool } = require('../db/client');
 const { logger } = require('../logger');
 
-const RETRY_BACKOFFS = [5_000, 15_000, 45_000, 120_000, 300_000]; // 5s, 15s, 45s, 2m, 5m
+const DEFAULT_RETRY_BACKOFFS_MS = [5_000, 15_000, 45_000, 120_000, 300_000]; // 5s, 15s, 45s, 2m, 5m
+
+function parseRetryBackoffValue(value) {
+  const delay = Number(value);
+
+  if (!Number.isInteger(delay) || delay < 1) {
+    throw new Error('RETRY_BACKOFFS_MS must be a comma-separated list of positive integers (milliseconds)');
+  }
+
+  return delay;
+}
+
+function getRetryBackoffsMs(env = process.env) {
+  const rawBackoffs = env.RETRY_BACKOFFS_MS;
+
+  if (!rawBackoffs) {
+    return [...DEFAULT_RETRY_BACKOFFS_MS];
+  }
+
+  const backoffs = String(rawBackoffs)
+    .split(',')
+    .map(entry => parseRetryBackoffValue(entry.trim()));
+
+  if (backoffs.length === 0) {
+    throw new Error('RETRY_BACKOFFS_MS must include at least one retry delay');
+  }
+
+  return backoffs;
+}
+
+const RETRY_BACKOFFS = getRetryBackoffsMs();
 
 /**
  * Tracks retry state in PostgreSQL so retry cycles survive service restarts.
  * Designed for use with BullMQ job processing: records attempt count,
  * schedules next_retry_at, and provides a worker to resume timed-out retries.
  */
-async function initRetryState(jobType, jobId, maxAttempts = 5) {
+async function initRetryState(jobType, jobId, maxAttempts = 5, eventPayload = null) {
   await pool.query(
-    `INSERT INTO retry_state (job_type, job_id, max_attempts, status)
-     VALUES ($1, $2, $3, 'pending')
-     ON CONFLICT (job_type, job_id) DO NOTHING`,
-    [jobType, String(jobId), maxAttempts]
+    `INSERT INTO retry_state (job_type, job_id, max_attempts, status, event_payload)
+     VALUES ($1, $2, $3, 'pending', $4)
+     ON CONFLICT (job_type, job_id) DO UPDATE
+       SET event_payload = COALESCE(retry_state.event_payload, EXCLUDED.event_payload)`,
+    [jobType, String(jobId), maxAttempts, eventPayload ? JSON.stringify(eventPayload) : null]
   );
 }
 
 async function getRetryState(jobType, jobId) {
   const { rows } = await pool.query(
     `SELECT id, job_type, job_id, attempt_count, max_attempts,
-            last_error, next_retry_at, status, created_at, updated_at
+            last_error, next_retry_at, status, created_at, updated_at,
+            event_payload
      FROM retry_state
      WHERE job_type = $1 AND job_id = $2`,
     [jobType, String(jobId)]
@@ -43,8 +77,9 @@ async function recordRetry(jobType, jobId, errorMessage) {
   }
 
   const newAttemptCount = state.attempt_count + 1;
-  const backoffIndex = Math.min(newAttemptCount - 1, RETRY_BACKOFFS.length - 1);
-  const delayMs = RETRY_BACKOFFS[backoffIndex];
+  const retryBackoffs = getRetryBackoffsMs();
+  const backoffIndex = Math.min(newAttemptCount - 1, retryBackoffs.length - 1);
+  const delayMs = retryBackoffs[backoffIndex];
   const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
 
   const status = newAttemptCount >= state.max_attempts ? 'failed' : 'retrying';
@@ -117,7 +152,8 @@ async function failRetry(jobType, jobId, errorMessage) {
 async function findDueRetries(jobType, limit = 50) {
   const { rows } = await pool.query(
     `SELECT id, job_type, job_id, attempt_count, max_attempts,
-            last_error, next_retry_at, status, created_at, updated_at
+            last_error, next_retry_at, status, created_at, updated_at,
+            event_payload
      FROM retry_state
      WHERE job_type = $1
        AND status = 'retrying'
@@ -131,14 +167,24 @@ async function findDueRetries(jobType, limit = 50) {
 }
 
 /**
- * Reset stuck retries that were in 'retrying' state with a past next_retry_at
- * (e.g. after a crash). Moves them back to 'pending' so the worker picks them up.
+ * Reset stuck retries whose next_retry_at is well in the past (e.g. the worker
+ * was killed mid-retry). Makes them immediately due so the worker picks them up
+ * on the next poll.
+ *
+ * Status deliberately stays 'retrying'. It previously moved rows to 'pending',
+ * but `findDueRetries` selects only `status = 'retrying'` — and nothing
+ * anywhere transitions 'pending' back — so the one function meant to resume
+ * retries after a restart was silently killing them. A worker killed with N
+ * merged PRs mid-retry would flip all N into a state no query reads, and those
+ * PRs would never be registered on-chain, with no error logged.
+ *
+ * 'pending' is the pre-first-attempt state set by initRetryState; the partial
+ * index in 001_create_retry_state.sql is likewise `WHERE status = 'retrying'`.
  */
 async function resetStuckRetries(jobType) {
   const { rowCount } = await pool.query(
     `UPDATE retry_state
-     SET status = 'pending',
-         next_retry_at = NOW(),
+     SET next_retry_at = NOW(),
          updated_at = NOW()
      WHERE job_type = $1
        AND status = 'retrying'
@@ -161,5 +207,7 @@ module.exports = {
   failRetry,
   findDueRetries,
   resetStuckRetries,
+  DEFAULT_RETRY_BACKOFFS_MS,
+  getRetryBackoffsMs,
   RETRY_BACKOFFS,
 };

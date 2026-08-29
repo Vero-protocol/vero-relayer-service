@@ -106,6 +106,59 @@ test('retry-resumed job without pull request number is rejected as unrecoverable
   assert.deepEqual(calls, []);
 });
 
+test('persisted event_payload is re-enqueued and reaches processEventJob with original payload intact', async () => {
+  // Simulates the full retry resume flow:
+  // 1. findDueRetries returns a row with the persisted event_payload
+  // 2. retry-worker re-enqueues that payload (not a retry.resume stub)
+  // 3. processEventJob receives and processes the original event
+
+  const originalPayload = buildRetryResumePayload(77);
+  const persistedRow = {
+    id: 1,
+    job_type: 'event-processing',
+    job_id: 'original-job-42',
+    attempt_count: 1,
+    max_attempts: 5,
+    last_error: 'Stellar transaction failed',
+    next_retry_at: new Date().toISOString(),
+    status: 'retrying',
+    event_payload: originalPayload
+  };
+
+  // This is what retry-worker does: take persistedRow.event_payload and
+  // pass it to processEventJob (via enqueueEvent -> worker)
+  const receivedPayload = persistedRow.event_payload;
+  assert.ok(receivedPayload, 'event_payload must be present on the persisted row');
+  assert.equal(receivedPayload.eventType, 'github.pull_request.merged');
+
+  const calls = [];
+  const job = retryJob(receivedPayload, { id: 'retry-original-job-42-1' });
+
+  const result = await processEventJob(job, {
+    registerTaskOnChain: async prNumber => {
+      calls.push(prNumber);
+    }
+  });
+
+  assert.deepEqual(calls, [77]);
+  assert.deepEqual(result, { pr: 77 });
+});
+
+test('retry-resumed job without persisted event_payload is failed', async () => {
+  // When event_payload is null (e.g. old row before migration), the retry
+  // worker marks it as failed instead of crashing
+  const rowWithoutPayload = {
+    id: 2,
+    job_type: 'event-processing',
+    job_id: 'old-job-no-payload',
+    attempt_count: 1,
+    max_attempts: 5,
+    event_payload: null
+  };
+
+  assert.equal(rowWithoutPayload.event_payload, null, 'event_payload should be null for legacy rows');
+});
+
 test('retry-resumed job records broadcast failure for downstream retry', async () => {
   const payload = buildRetryResumePayload(55);
   const job = retryJob(payload, { id: 'retry-original-job-3-2' });

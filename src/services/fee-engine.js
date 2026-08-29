@@ -443,8 +443,33 @@ function validateFeeConfig(env = process.env) {
   getFeeEngineConfig(env);
 }
 
-function clearFeeEstimateCache() {
+/**
+ * Clears both fee-estimate caching layers: the short-lived in-process
+ * result cache (STELLAR_FEE_CACHE_MS) and, if one was ever created, the
+ * Redis-backed RPC cache wrapping client.getFeeStats(). The latter has its
+ * own fixed TTL (RPC_CACHE_TTL_FEE, independent of STELLAR_FEE_CACHE_MS)
+ * and is keyed globally rather than per-call, so leaving it warm between
+ * calls with different mock clients — as tests do — would otherwise return
+ * stale results.
+ */
+async function clearFeeEstimateCache() {
   cachedEstimate = null;
+  if (rpcCache) {
+    await rpcCache.clearCache();
+  }
+}
+
+/**
+ * Closes the underlying RPC cache's Redis client, if one was ever created.
+ * Primarily used by tests to release the connection so the process can
+ * exit cleanly.
+ */
+async function closeRpcCache() {
+  if (!rpcCache) return;
+  const cache = rpcCache;
+  rpcCache = null;
+  cachedGetFeeStats = null;
+  await cache.close();
 }
 
 module.exports = {
@@ -455,6 +480,7 @@ module.exports = {
   applyMultiplier,
   clampFee,
   clearFeeEstimateCache,
+  closeRpcCache,
   createFeeStatsClient,
   estimateStellarFee,
   estimateStellarFeeDetails,

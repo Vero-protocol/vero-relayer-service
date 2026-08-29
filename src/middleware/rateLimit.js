@@ -2,8 +2,8 @@
  * Rate-limiting middleware for the public ingest endpoint.
  *
  * Distinguishes between:
- *   - Authenticated requests (bearing a valid signature or Authorization header)
- *     which receive a more generous limit.
+ *   - Authenticated requests whose GitHub signature has already been
+ *     cryptographically verified, which receive a more generous limit.
  *   - Public / unauthenticated requests which receive a tighter limit.
  *
  * The real client IP is extracted from X-Forwarded-For when Express trust
@@ -41,6 +41,8 @@ try {
 } catch (e) {
   logger = console;
 }
+const { sendError } = require('../utils/http-errors');
+const { classifySignature, isSignatureVerified } = require('./auth');
 let IORedis;
 let getRedisConnectionOptions;
 try {
@@ -54,26 +56,42 @@ try {
   getRedisConnectionOptions = null;
 }
 
-let redisClient;
-let redisStore = null;
+let redisClient = null;
 
+function getSharedRedisClient() {
+  if (!redisClient) {
+    redisClient = new IORedis(getRedisConnectionOptions());
+  }
+  return redisClient;
+}
+
+/**
+ * Builds a callback-style ("legacy") express-rate-limit store backed by
+ * Redis. express-rate-limit auto-detects and promisifies a store that
+ * exposes `incr` but not `increment` — deliberately NOT defining
+ * `increment` here lets that detection work; defining both breaks it,
+ * since express-rate-limit then treats `increment` as the modern
+ * promise-returning API and gets `undefined` back from this callback-based
+ * one.
+ *
+ * Each rate limiter needs its own store *instance* — express-rate-limit
+ * rejects sharing one store object across multiple rateLimit() calls — so
+ * this returns a fresh object on every call. The underlying Redis
+ * connection is still shared and lazily created only once.
+ */
 function createRedisStore(windowMs) {
   if (!process.env.REDIS_HOST) {
     return null;
   }
 
   try {
-    const connOpts = getRedisConnectionOptions();
-    redisClient = new IORedis(connOpts);
+    const client = getSharedRedisClient();
 
-    // Minimal store implementation compatible with express-rate-limit.
-    // It exposes `incr(key, cb)` and `resetKey(key)`.
     return {
-      // support both `incr` and `increment` naming variants
       incr: (key, cb) => {
         const redisKey = `rl:${key}`;
         // Atomically INCR and get PTTL
-        redisClient.multi().incr(redisKey).pttl(redisKey).exec((err, replies) => {
+        client.multi().incr(redisKey).pttl(redisKey).exec((err, replies) => {
           if (err) return cb(err);
           const incrReply = replies && replies[0] && replies[0][1];
           const pttlReply = replies && replies[1] && replies[1][1];
@@ -82,32 +100,28 @@ function createRedisStore(windowMs) {
 
           if (pttlReply === -1 || pttlReply === -2) {
             // Key had no TTL or did not exist; set expiry
-            redisClient.pexpire(redisKey, windowMs).catch(() => {});
-            const reset = Date.now() + windowMs;
+            client.pexpire(redisKey, windowMs).catch(() => {});
+            // resetTime must be a Date instance — express-rate-limit calls
+            // .getTime() on it when building RateLimit-* response headers.
+            const reset = new Date(Date.now() + windowMs);
             return cb(null, hits, reset);
           }
 
-          const reset = Date.now() + Math.max(0, pttlReply);
+          const reset = new Date(Date.now() + Math.max(0, pttlReply));
           return cb(null, hits, reset);
         });
       },
-      increment: (key, cb) => {
-        // alias to incr
-        // `this` is not bound in arrow functions; prefer calling the incr implementation
-        try {
-          if (redisStore && typeof redisStore.incr === 'function') {
-            return redisStore.incr(key, cb);
-          }
-        } catch (e) {
-          // ignore and fallback
-        }
-
-        // fallback: best-effort response when store unavailable
-        return cb(null, 1, Date.now() + windowMs);
-      },
       resetKey: (key) => {
         const redisKey = `rl:${key}`;
-        redisClient.del(redisKey).catch(() => {});
+        client.del(redisKey).catch(() => {});
+      },
+      // Required by the Store interface (used to undo an increment when
+      // skipFailedRequests/skipSuccessfulRequests apply — neither is
+      // enabled here, but the method must still exist or rateLimit()
+      // throws "An invalid store was passed" at construction time).
+      decrement: (key) => {
+        const redisKey = `rl:${key}`;
+        client.decr(redisKey).catch(() => {});
       }
     };
   } catch (err) {
@@ -115,9 +129,6 @@ function createRedisStore(windowMs) {
     return null;
   }
 }
-
-// initialize redis store lazily (after window constants are defined)
-// will attempt to create below once PUBLIC_WINDOW_MS is available
 
 // ---------------------------------------------------------------------------
 // Limits (configurable via environment variables)
@@ -147,6 +158,11 @@ const AUTH_MAX         = Number(process.env.RATE_LIMIT_AUTH_MAX)     || 1_000;
  */
 function clientIp(req) {
   if (req.ip) {
+    // ipKeyGenerator takes the IP string itself, not the request object —
+    // passing `req` here made every key resolve to the literal string
+    // "[object Object]" (isIPv6() rejects a non-string, so it falls through
+    // to `return ip` unchanged), collapsing every client into one shared
+    // rate-limit counter regardless of actual IP.
     return ipKeyGenerator(req.ip);
   }
   return req.socket?.remoteAddress || 'unknown';
@@ -157,18 +173,12 @@ function clientIp(req) {
 // ---------------------------------------------------------------------------
 
 /**
- * A request is considered "authenticated" when it presents either:
- *   - An Authorization header (JWT Bearer token), or
- *   - An X-Hub-Signature-256 header (GitHub HMAC signature), or
- *   - An X-Vero-Signature header (Vero HMAC signature).
+ * A request is considered authenticated only after its GitHub HMAC signature
+ * has been cryptographically verified by the webhook authentication middleware.
+ * Header presence alone must never grant the higher rate-limit tier.
  */
 function isAuthenticated(req) {
-  const headers = req.headers || {};
-  return !!(
-    headers['authorization'] ||
-    headers['x-hub-signature-256'] ||
-    headers['x-vero-signature']
-  );
+  return isSignatureVerified(req);
 }
 
 // ---------------------------------------------------------------------------
@@ -181,14 +191,14 @@ const publicRateLimiter = rateLimit({
   standardHeaders: true,   // Emit RateLimit-* headers (RFC 6585)
   legacyHeaders: false,
   keyGenerator: clientIp,
-  skip: (req) => isAuthenticated(req), // authenticated callers use auth limiter
-  // lazily initialize redis store now that PUBLIC_WINDOW_MS is available
-  store: (function() {
-    if (!redisStore && IORedis && getRedisConnectionOptions && process.env.REDIS_HOST) {
-      redisStore = createRedisStore(PUBLIC_WINDOW_MS);
-    }
-    return redisStore || undefined;
-  })(),
+  skip(req) {
+    // Tier selection and enforcement share this private, cached decision.
+    // Classifying inside the first limiter also makes it impossible to mount
+    // the dual limiter without establishing the authentication state first.
+    classifySignature(req);
+    return isAuthenticated(req); // verified callers use auth limiter
+  },
+  store: createRedisStore(PUBLIC_WINDOW_MS) || undefined,
   handler(req, res) {
     try {
       const route = req.originalUrl || req.url || 'unknown';
@@ -199,11 +209,7 @@ const publicRateLimiter = rateLimit({
       (req.log || logger).warn({ err: e && e.message }, 'failed to record rate limit metric');
     }
 
-    res.status(429).json({
-      error: 'Too many requests from this IP. Please retry after the window resets.',
-      code: 'RATE_LIMIT_EXCEEDED',
-      retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000),
-    });
+    return sendError(res, 429, 'RATE_LIMIT_EXCEEDED', 'Too many requests from this IP. Please retry after the window resets.', { retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000) });
   },
 });
 
@@ -218,12 +224,7 @@ const authenticatedRateLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: clientIp,
   skip: (req) => !isAuthenticated(req), // public callers use publicRateLimiter
-  store: (function() {
-    if (!redisStore && IORedis && getRedisConnectionOptions && process.env.REDIS_HOST) {
-      redisStore = createRedisStore(PUBLIC_WINDOW_MS);
-    }
-    return redisStore || undefined;
-  })(),
+  store: createRedisStore(PUBLIC_WINDOW_MS) || undefined,
   handler(req, res) {
     try {
       const route = req.originalUrl || req.url || 'unknown';
@@ -233,11 +234,7 @@ const authenticatedRateLimiter = rateLimit({
       (req.log || logger).warn({ err: e && e.message }, 'failed to record rate limit metric');
     }
 
-    res.status(429).json({
-      error: 'Rate limit exceeded for authenticated client. Please retry after the window resets.',
-      code: 'RATE_LIMIT_EXCEEDED',
-      retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000),
-    });
+    return sendError(res, 429, 'RATE_LIMIT_EXCEEDED', 'Rate limit exceeded for authenticated client. Please retry after the window resets.', { retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000) });
   },
 });
 
@@ -247,15 +244,26 @@ const authenticatedRateLimiter = rateLimit({
 
 /**
  * Express middleware that applies either the public or authenticated rate
- * limit based on whether the incoming request carries auth headers.
+ * limit based on a previously established authentication decision.
  *
  * Mount this before the route handler on any public-facing ingest endpoint.
  */
 function ingestRateLimiter(req, res, next) {
-  if (isAuthenticated(req)) {
+  return publicRateLimiter(req, res, (err) => {
+    if (err) return next(err);
     return authenticatedRateLimiter(req, res, next);
-  }
-  return publicRateLimiter(req, res, next);
+  });
+}
+
+/**
+ * Closes the cached Redis client, if one was ever created. Primarily used by
+ * tests to release the connection so the process can exit cleanly.
+ */
+async function closeRedisClient() {
+  if (!redisClient) return;
+  const client = redisClient;
+  redisClient = null;
+  await client.quit().catch(() => client.disconnect());
 }
 
 module.exports = {
@@ -267,4 +275,5 @@ module.exports = {
   PUBLIC_WINDOW_MS,
   PUBLIC_MAX,
   AUTH_MAX,
+  closeRedisClient,
 };

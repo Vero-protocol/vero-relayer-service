@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const { UnrecoverableError, Worker } = require('bullmq');
 const { logger } = require('../logger');
-const { registerTaskOnChain } = require('../../stellar');
+const { registerTaskOnChain } = require('../services/stellar');
 const { EVENT_TYPES } = require('../queue/types');
 const {
   getBullMqQueueSettings,
@@ -49,7 +49,7 @@ async function processEventJob(job, dependencies = {}) {
 
   // Track this job in the retry state table (idempotent via ON CONFLICT)
   try {
-    await initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts);
+    await initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts, job.data);
   } catch (stateErr) {
     logger.warn({ jobId, error: stateErr.message }, '[worker] Failed to init retry state (non-fatal)');
   }
@@ -133,7 +133,7 @@ function createEventWorker(options = {}) {
     // (This catches failures before processEventJob runs, e.g. job deserialization errors)
     if (job && !(error instanceof UnrecoverableError)) {
       const maxAttempts = (job.opts && job.opts.attempts) || 5;
-      initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts)
+      initRetryState(RETRY_JOB_TYPE, jobId, maxAttempts, job.data)
         .then(() => recordRetry(RETRY_JOB_TYPE, jobId, error.message))
         .catch(err => logger.error({ jobId, error: err.message }, '[worker] Failed to record retry in failed handler'));
     }

@@ -1,7 +1,7 @@
 /**
  * Integration tests for PostgreSQL connection pool.
  * 
- * Run with: node --test tests/pool-integration.test.js
+ * Run with: node --test test/pool-integration.test.js
  * 
  * Prerequisites:
  * - PostgreSQL database running

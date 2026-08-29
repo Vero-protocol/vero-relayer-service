@@ -2,6 +2,7 @@
 
 const { verifyJwt } = require('../services/jwt');
 const { logger } = require('../logger');
+const { sendError } = require('../utils/http-errors');
 
 // ---------------------------------------------------------------------------
 // JWT Bearer middleware for service-to-service authentication.
@@ -11,15 +12,7 @@ const { logger } = require('../logger');
 // rejected, preventing unauthenticated internal traffic.
 // ---------------------------------------------------------------------------
 
-const ERROR_CODES = {
-  MISSING_TOKEN: 401,
-  MALFORMED_TOKEN: 401,
-  INVALID_ALGORITHM: 401,
-  INVALID_SIGNATURE: 401,
-  TOKEN_EXPIRED: 401,
-  TOKEN_NOT_YET_VALID: 401,
-  INVALID_ISSUER: 401,
-};
+const { statusForCode } = require('../services/jwt-error-codes');
 
 /**
  * Express middleware that enforces JWT Bearer authentication.
@@ -38,26 +31,17 @@ function verifyJwtBearer(req, res, next) {
   const authHeader = req.headers['authorization'];
 
   if (!authHeader) {
-    return res.status(401).json({
-      error: 'Missing Authorization header',
-      code: 'MISSING_TOKEN',
-    });
+    return sendError(res, 401, 'MISSING_TOKEN', 'Missing Authorization header');
   }
 
   if (!authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      error: 'Authorization header must use Bearer scheme',
-      code: 'MALFORMED_TOKEN',
-    });
+    return sendError(res, 401, 'MALFORMED_TOKEN', 'Authorization header must use Bearer scheme');
   }
 
   const token = authHeader.slice(7).trim();
 
   if (!token) {
-    return res.status(401).json({
-      error: 'Bearer token is empty',
-      code: 'MISSING_TOKEN',
-    });
+    return sendError(res, 401, 'MISSING_TOKEN', 'Bearer token is empty');
   }
 
   try {
@@ -65,16 +49,13 @@ function verifyJwtBearer(req, res, next) {
     req.jwtPayload = payload;
     return next();
   } catch (err) {
-    const status = ERROR_CODES[err.code] ?? 401;
+    const status = statusForCode(err.code) ?? 401;
     logger.warn(
       { code: err.code, path: req.path, method: req.method },
       '[jwt-auth] rejected request: %s',
       err.message
     );
-    return res.status(status).json({
-      error: err.message,
-      code: err.code ?? 'INVALID_TOKEN',
-    });
+    return sendError(res, status, err.code ?? 'INVALID_TOKEN', err.message);
   }
 }
 

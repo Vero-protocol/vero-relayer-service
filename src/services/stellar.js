@@ -1,11 +1,12 @@
+
 require('dotenv').config();
 const { Keypair, TransactionBuilder, Networks, Operation } = require('@stellar/stellar-sdk');
-const { broadcastTransaction, fetchAccount } = require('./src/services/broadcaster');
-const { estimateStellarFee } = require('./src/services/fee-engine');
-const { transactionLogger } = require('./src/services/transaction-logger');
-const nonceManager = require('./src/relayer/nonceManager');
+const { broadcastTransaction, fetchAccount } = require('./broadcaster');
+const { estimateStellarFee } = require('./fee-engine');
+const { transactionLogger } = require('./transaction-logger');
+const nonceManager = require('../relayer/nonceManager');
 
-const { rpcFactory } = require('./src/services');
+const rpcFactory = require('./rpc-factory');
 
 async function submitTransaction(transaction) {
   const secretKey = process.env.STELLAR_SECRET_KEY;
@@ -24,7 +25,7 @@ async function submitTransaction(transaction) {
 
   return nonceManager.withSequentialNonce(
     publicKey,
-    () => fetchAccount(server, publicKey),
+    (options) => fetchAccount(server, publicKey, options),
     async (account) => {
       const tx = new TransactionBuilder(account, {
         fee: transaction.fee,

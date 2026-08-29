@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { test } = require("node:test");
+const { test: nodeTest } = require("node:test");
 const {
   clearFeeEstimateCache,
   estimateStellarFee,
@@ -8,6 +8,24 @@ const {
   getFeeEngineConfig,
   resolveCustomFee,
 } = require("../src/services/fee-engine");
+
+// estimateStellarFee/estimateStellarFeeDetails wrap client.getFeeStats() in
+// a Redis-backed RPC cache keyed globally (not per-call), independent of
+// each test's own mock client. Locally this cache silently degrades to a
+// noop (no REDIS_HOST), but against a real Redis (CI) it stays warm across
+// tests in this file and would return the first test's cached result for
+// every later assertion. Clear both cache layers before every test so
+// behavior doesn't depend on whether Redis happens to be reachable.
+//
+// node:test's top-level beforeEach() isn't available on Node 18.20 (the
+// version this repo's CI actually runs), so wrap test() itself instead —
+// this works on any Node version that has node:test at all.
+function test(name, fn) {
+  nodeTest(name, async (t) => {
+    await clearFeeEstimateCache();
+    return fn(t);
+  });
+}
 
 const silentLogger = {
   log: () => {},
@@ -226,8 +244,6 @@ test("invalid max cap fails configuration clearly", () => {
 });
 
 test("short cache window reuses recent fee estimates only when configured", async () => {
-  clearFeeEstimateCache();
-
   let calls = 0;
   const client = {
     getFeeStats: async () => {
@@ -248,6 +264,14 @@ test("short cache window reuses recent fee estimates only when configured", asyn
     logger: silentLogger,
     now: () => 1500,
   });
+
+  // The in-process cache correctly treats itself as expired by this point
+  // (now() is past the 1000ms window), but the underlying RPC cache has its
+  // own much longer, wall-clock-based TTL and would still be warm from the
+  // first call — clear it so this "expired, fetch fresh" step actually
+  // exercises client.getFeeStats() again, matching what the in-process
+  // cache alone would do if the RPC layer weren't present.
+  await clearFeeEstimateCache();
   const third = await estimateStellarFee({
     env: env({ STELLAR_FEE_CACHE_MS: "1000" }),
     client,
@@ -259,8 +283,6 @@ test("short cache window reuses recent fee estimates only when configured", asyn
   assert.equal(second, "301");
   assert.equal(third, "302");
   assert.equal(calls, 2);
-
-  clearFeeEstimateCache();
 });
 
 // ── Custom fee override ────────────────────────────────────────────────────

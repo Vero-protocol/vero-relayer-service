@@ -13,7 +13,11 @@ const PullRequestSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
   node_id: z.string().optional(),
   number: z.number().int('PR number must be an integer').positive('PR number must be positive'),
-  merged: z.boolean({ required_error: 'merged is required', invalid_type_error: 'merged must be a boolean' }),
+  merged: z.boolean({
+    // Zod 4 dropped required_error/invalid_type_error in favor of a single
+    // error callback — issue.input is undefined for the "missing" case.
+    error: issue => issue.input === undefined ? 'merged is required' : 'merged must be a boolean',
+  }),
   labels: z.array(LabelSchema).default([]),
 }).strict();
 
@@ -24,7 +28,9 @@ const RepositorySchema = z.object({
 }).strict();
 
 const TaskPayloadSchema = z.object({
-  action: z.string({ required_error: 'action is required' }).trim().min(1, 'action must be a non-empty string'),
+  action: z.string({
+    error: issue => issue.input === undefined ? 'action is required' : 'action must be a string',
+  }).trim().min(1, 'action must be a non-empty string'),
   pull_request: PullRequestSchema,
   repository: RepositorySchema.nullable().optional(),
 }).strict();
@@ -44,7 +50,7 @@ function validate(payload) {
   }
 
   const errors = [];
-  for (const issue of result.error.errors) {
+  for (const issue of result.error.issues) {
     if (issue.code === 'unrecognized_keys') {
       for (const key of issue.keys) {
         errors.push({
