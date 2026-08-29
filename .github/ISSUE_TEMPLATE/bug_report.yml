@@ -1,0 +1,100 @@
+name: 🐛 Bug Report
+description: Report a bug in the Vero Relayer Service
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🐛 Bug Report
+        Thank you for taking the time to report a bug. Please fill out the information below to help us investigate.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Provide a brief summary of the issue
+      placeholder: "e.g., Transaction submission retries after a timeout, producing a duplicate"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this issue?
+      options:
+        - Critical (Service down / funds or keys at risk)
+        - High (Major feature broken)
+        - Medium (Feature partially broken)
+        - Low (Minor issue / UX)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the relayer is affected?
+      options:
+        - Transaction submission / broadcaster
+        - Nonce & sequence management
+        - RPC factory / endpoint failover
+        - Fee engine
+        - Config poller / dynamic configuration
+        - Queue & workers
+        - Auth (JWT) / rate limiting
+        - Metrics & diagnostics
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Describe the steps to reproduce the bug
+      placeholder: |
+        1. Configure the relayer with ...
+        2. Submit ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include logs or error output if available. Redact any secret keys or tokens.
+    validations:
+      required: true
+
+  - type: input
+    id: network
+    attributes:
+      label: Stellar network
+      placeholder: "testnet / mainnet"
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: "e.g. 22.11.0"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues for a duplicate
+          required: true
+        - label: I have removed all secrets, keys, and tokens from any logs I pasted
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔐 Report a security vulnerability
+    url: https://github.com/Vero-protocol/vero-relayer-service/security/policy
+    about: Please report security issues privately using the process in SECURITY.md — do not open a public issue.
+  - name: 💬 Contributing guide
+    url: https://github.com/Vero-protocol/vero-relayer-service/blob/main/CONTRIBUTING.md
+    about: Read this before opening a pull request.
