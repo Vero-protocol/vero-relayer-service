@@ -1,0 +1,47 @@
+name: 📚 Documentation
+description: Report missing, unclear, or incorrect documentation
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📚 Documentation
+        Tell us what is missing, unclear, or wrong.
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Which file, section, or page?
+      placeholder: "e.g. README.md — Configuration, or docs/deployment.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type of problem
+      options:
+        - Missing documentation
+        - Incorrect or outdated information
+        - Unclear or hard to follow
+        - Broken link or example
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: What needs changing?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing issues for a duplicate
+          required: true
