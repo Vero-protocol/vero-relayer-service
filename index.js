@@ -44,6 +44,18 @@ function createApp(options = {}) {
   registerMetrics(app, { authMiddleware: verifyJwtBearer });
 
   app.get('/health', async (req, res) => {
+    if (!migrationsComplete) {
+      return res.status(503).json({
+        status: 'DEGRADED',
+        timestamp: new Date().toISOString(),
+        database: {
+          healthy: false,
+          migrationsComplete: false,
+          error: 'Database migrations have not completed',
+        },
+      });
+    }
+
     try {
       const dbHealth = await dbHealthCheckFn();
       const poolMetrics = getPoolMetricsFn();
@@ -51,6 +63,7 @@ function createApp(options = {}) {
       const database = dbHealth.healthy
         ? {
             healthy: true,
+            migrationsComplete: true,
             latencyMs: dbHealth.latencyMs,
             pool: poolMetrics,
           }
@@ -140,13 +153,19 @@ function createApp(options = {}) {
   return app;
 }
 
-async function startServer() {
+async function startServer(options = {}) {
+  const runMigrationsFn = options.runMigrations || runMigrations;
+  const createAppFn = options.createApp || createApp;
+  const validateRedisConfigFn = options.validateRedisConfig || validateRedisConfig;
+  const startConfigPollerFn = options.startConfigPoller || startConfigPoller;
+
   // Run database migrations before accepting connections
   try {
-    await runMigrations();
+    await runMigrationsFn();
     logger.info('[startup] Database migrations complete');
   } catch (migrationErr) {
-    logger.error({ error: migrationErr.message }, '[startup] Database migrations failed — continuing');
+    logger.error({ error: migrationErr.message }, '[startup] Database migrations failed');
+    throw migrationErr;
   }
 
   // Verify database pool connectivity
@@ -161,11 +180,11 @@ async function startServer() {
     logger.error({ error: error.message }, '[startup] Database health check failed');
   }
 
-  validateRedisConfig();
-  startConfigPoller();
+  validateRedisConfigFn();
+  startConfigPollerFn();
 
   const port = process.env.PORT || 3000;
-  const app = createApp();
+  const app = createAppFn({ migrationsComplete: true });
   const server = app.listen(port, () => {
     logger.info({ port }, 'server listening');
   });
