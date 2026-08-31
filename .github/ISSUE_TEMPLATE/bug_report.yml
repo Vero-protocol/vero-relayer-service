@@ -98,3 +98,12 @@ body:
           required: true
         - label: I have removed all secrets, keys, and tokens from any logs I pasted
           required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **If you pick this issue up:** the pull request that closes it needs a
+        **detailed description** — what was wrong, the approach you took, anything
+        the reviewer should look at closely, and how you verified it. A one-line
+        description will be sent back before review. See CONTRIBUTING.md.
