@@ -45,3 +45,12 @@ body:
       options:
         - label: I have searched existing issues for a duplicate
           required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **If you pick this issue up:** the pull request that closes it needs a
+        **detailed description** — what was wrong, the approach you took, anything
+        the reviewer should look at closely, and how you verified it. A one-line
+        description will be sent back before review. See CONTRIBUTING.md.
