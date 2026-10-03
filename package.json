@@ -6,8 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
+    "start": "node init && node index.js",
+    "dev": "node init && nodemon index.js",
     "worker:events": "node src/workers/event-worker.js",
     "simulate": "node scripts/mock-webhook.js",
     "db:migrate": "node -e \"require('./src/db/run-migrations').runMigrations().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); })\"",
