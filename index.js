@@ -12,7 +12,13 @@ const { storeRawEvent, fetchRawEvent } = require('./src/queue/raw-event-store');
 const { registerMetrics } = require('./src/metrics/metrics');
 const { enforceIdempotency } = require('./src/middleware/idempotency');
 const { logger } = require('./src/logger');
-const { startConfigPoller, getConfigSyncHealth } = require('./src/services/config-poller');
+const { startConfigPoller, stopConfigPoller, getConfigSyncHealth } = require('./src/services/config-poller');
+const { shutdown: shutdownDbPool } = require('./src/db/client');
+const { closeRedisClient: closeIdempotencyRedis } = require('./src/middleware/idempotency');
+const { closeRedisClient: closeRateLimitRedis } = require('./src/middleware/rateLimit');
+const { closeEventQueue } = require('./src/queue/event-queue');
+const { closeRpcCache } = require('./src/services/fee-engine');
+const { createGracefulShutdown } = require('./src/services/graceful-http-shutdown');
 const {
   publicRateLimiter,
   authenticatedRateLimiter,
@@ -169,6 +175,23 @@ async function startServer() {
   const server = app.listen(port, () => {
     logger.info({ port }, 'server listening');
   });
+
+  // The HTTP entrypoint, not the imported PostgreSQL pool, owns process
+  // signals. Stop accepting new connections, drain in-flight webhooks, then
+  // release every resource that may keep this service alive.
+  const shutdown = createGracefulShutdown({
+    server,
+    stopPoller: stopConfigPoller,
+    closeResources: [
+      { name: 'event-queue', close: closeEventQueue },
+      { name: 'idempotency-redis', close: closeIdempotencyRedis },
+      { name: 'rate-limit-redis', close: closeRateLimitRedis },
+      { name: 'rpc-cache', close: closeRpcCache },
+      { name: 'postgres', close: shutdownDbPool },
+    ],
+    log: logger,
+  });
+  shutdown.installSignals();
 
   return server;
 }

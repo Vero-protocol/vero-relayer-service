@@ -155,16 +155,8 @@ async function shutdown() {
   }
 }
 
-// Graceful shutdown on SIGTERM/SIGINT
-process.on('SIGTERM', async () => {
-  await shutdown();
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  await shutdown();
-  process.exit(0);
-});
+// Signal handling belongs to the owning entrypoint (HTTP server or worker).
+// Auto-exiting here would interrupt in-flight requests before they drain.
 
 module.exports = {
   pool,

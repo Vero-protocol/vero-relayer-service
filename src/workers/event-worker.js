@@ -18,6 +18,7 @@ const {
 } = require('../metrics/metrics');
 const { startConfigPoller, stopConfigPoller } = require('../services/config-poller');
 const { runMigrations } = require('../db/run-migrations');
+const { shutdown: shutdownDbPool } = require('../db/client');
 const { startRetryWorker } = require('./retry-worker');
 const {
   initRetryState,
@@ -193,6 +194,9 @@ async function startEventWorker() {
     }
     await cleanupQueue.close();
     await worker.close();
+    // The pool no longer owns process-level signals; workers close it after
+    // their own in-flight jobs have finished.
+    await shutdownDbPool();
     process.exit(0);
   }
 
