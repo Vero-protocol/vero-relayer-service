@@ -96,6 +96,101 @@ test('classifier verifies GitHub official HMAC-SHA256 test vector', () => {
   });
 });
 
+test('valid signature passes enforcement and calls next', () => {
+  withoutWebhookEnv(() => {
+    process.env.GITHUB_WEBHOOK_SECRET = "It's a Secret to Everybody";
+    const req = {
+      headers: {
+        'x-hub-signature-256': 'sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17'
+      },
+      rawBody: Buffer.from('Hello, World!', 'utf8')
+    };
+    const res = response();
+    let nextCalled = false;
+
+    verifySignature(req, res, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, true);
+    assert.equal(res.statusCode, null);
+    assert.equal(isSignatureVerified(req), true);
+  });
+});
+
+test('invalid signature is rejected with 401 Unauthorized', () => {
+  withoutWebhookEnv(() => {
+    process.env.GITHUB_WEBHOOK_SECRET = "It's a Secret to Everybody";
+    const req = {
+      headers: {
+        'x-hub-signature-256': 'sha256=0000000000000000000000000000000000000000000000000000000000000000'
+      },
+      rawBody: Buffer.from('Hello, World!', 'utf8')
+    };
+    const res = response();
+    let nextCalled = false;
+
+    verifySignature(req, res, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, false);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { error: 'Invalid signature' });
+    assert.equal(isSignatureVerified(req), false);
+  });
+});
+
+test('malformed and wrong-length signatures are rejected with 401 Unauthorized', () => {
+  withoutWebhookEnv(() => {
+    process.env.GITHUB_WEBHOOK_SECRET = 'test-webhook-secret';
+
+    for (const signature of ['garbage', 'sha256=', 'sha256=not-hex', 'sha256=abcd']) {
+      const req = {
+        headers: { 'x-hub-signature-256': signature },
+        rawBody: Buffer.from('{}', 'utf8')
+      };
+      const res = response();
+      let nextCalled = false;
+
+      verifySignature(req, res, () => { nextCalled = true; });
+
+      assert.equal(nextCalled, false, `expected rejection for ${signature}`);
+      assert.equal(res.statusCode, 401, `expected 401 for ${signature}`);
+      assert.deepEqual(res.body, { error: 'Invalid signature' });
+    }
+  });
+});
+
+test('missing x-hub-signature-256 header is rejected with 401 Unauthorized', () => {
+  withoutWebhookEnv(() => {
+    process.env.GITHUB_WEBHOOK_SECRET = 'test-webhook-secret';
+    const req = {
+      headers: {},
+      rawBody: Buffer.from('{}', 'utf8')
+    };
+    const res = response();
+    let nextCalled = false;
+
+    verifySignature(req, res, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, false);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { error: 'Invalid signature' });
+    assert.equal(isSignatureVerified(req), false);
+  });
+});
+
+test('missing GITHUB_WEBHOOK_SECRET is rejected with 500 even in production', () => {
+  withoutWebhookEnv(() => {
+    process.env.NODE_ENV = 'production';
+    const res = response();
+    let nextCalled = false;
+
+    verifySignature({ headers: {} }, res, () => { nextCalled = true; });
+
+    assert.equal(nextCalled, false);
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, { error: 'Webhook secret is not configured' });
+  });
+});
+
 test('signature enforcement reuses the classifier decision', () => {
   withoutWebhookEnv(() => {
     process.env.GITHUB_WEBHOOK_SECRET = "It's a Secret to Everybody";

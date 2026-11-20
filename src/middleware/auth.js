@@ -19,6 +19,10 @@ function requestPayload(req) {
     return req.rawBody;
   }
 
+  if (typeof req.rawBody === 'string') {
+    return Buffer.from(req.rawBody, 'utf8');
+  }
+
   return Buffer.from(JSON.stringify(req.body ?? {}), 'utf8');
 }
 
@@ -48,6 +52,8 @@ function getSignatureDecision(req) {
 
     if (typeof signature !== 'string' || signature.length === 0) {
       decision = { status: SIGNATURE_STATUS.MISSING, verified: false };
+    } else if (!/^sha256=[0-9a-f]{64}$/i.test(signature)) {
+      decision = { status: SIGNATURE_STATUS.INVALID, verified: false };
     } else {
       const digest = Buffer.from(
         'sha256=' + crypto.createHmac('sha256', secret).update(requestPayload(req)).digest('hex'),

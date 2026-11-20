@@ -35,6 +35,8 @@ function createApp(options = {}) {
   // client IP — required for accurate per-IP rate limiting behind a load balancer.
   app.set('trust proxy', 1);
 
+  // Capture the exact raw request bytes so webhook signatures can be verified
+  // against the payload GitHub actually signed (not a re-serialized body).
   app.use(express.json({
     verify: (req, res, buf) => {
       req.rawBody = buf;
@@ -88,6 +90,9 @@ function createApp(options = {}) {
   // The public limiter classifies once and skips verified requests; the auth
   // limiter has the inverse skip rule. Enforcement remains after both so
   // invalid attempts consume public quota before rejection.
+  // verifySignature validates the x-hub-signature-256 HMAC-SHA256 digest over
+  // req.rawBody using GITHUB_WEBHOOK_SECRET and rejects mismatches with 401.
+  // It runs after the rate limiters and before idempotency/payload handling.
   app.post('/github-webhook', publicRateLimiter, authenticatedRateLimiter, verifySignature, idempotencyMiddleware, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
